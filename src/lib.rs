@@ -1,5 +1,6 @@
 #![cfg_attr(not(target_arch = "wasm32"), forbid(unsafe_code))]
 #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
+pub mod drawio;
 pub mod error;
 pub mod frontend;
 pub mod generate;

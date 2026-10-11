@@ -246,3 +246,84 @@ pub extern "C" fn gostpadi_free(ptr: *mut u8, len: usize) {
         unsafe { drop(Vec::from_raw_parts(ptr, len, len)) };
     }
 }
+
+/// Тот же вход и тот же JSON, но другой выход на файл:
+/// mode 1 — SVG по содержимому, в миллиметрах (для отчёта),
+/// mode 2 — draw.io с редактируемыми блоками.
+///
+/// Отдельный вызов, а не поле в `gostpadi_render_batch`: файлы draw.io
+/// и SVG по содержимому нужны по кнопке, а не при каждой отрисовке,
+/// и в JSON на все три вида весили бы втрое.
+#[no_mangle]
+pub extern "C" fn gostpadi_export_batch(
+    ptr: *const u8,
+    len: usize,
+    ru: u8,
+    lw: f64,
+    font: f64,
+    mode: u8,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if ptr.is_null() || out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    };
+    let Some(inputs) = unpack(bytes).filter(|v| !v.is_empty()) else {
+        return std::ptr::null_mut();
+    };
+    let opts = Options {
+        labels: if ru != 0 { "ru" } else { "en" }.into(),
+        font: (font > 0.0).then_some(font),
+        lw: (lw > 0.0).then_some(lw),
+        no_split: false,
+    };
+    let st = opts.style();
+    let schemes = match pipeline::parse_batch(&inputs, &opts) {
+        Ok(s) => s,
+        Err((name, e)) => {
+            let mut out = String::from("{\"ok\":false,\"error\":{\"msg\":");
+            json_str(&mut out, &e.msg);
+            out.push_str(",\"name\":");
+            json_str(&mut out, &name);
+            out.push_str("}}");
+            return leak(out, out_len);
+        }
+    };
+    let produced = if mode == 2 {
+        pipeline::render_drawio_batch(schemes, &st)
+    } else {
+        pipeline::render_tight_batch(schemes, &st)
+    };
+    let mut out = String::with_capacity(4096);
+    out.push_str("{\"ok\":true,\"files\":[");
+    for (i, (name, page)) in produced.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"name\":");
+        json_str(&mut out, name);
+        out.push_str(",\"sheets\":[");
+        json_str(&mut out, page);
+        out.push_str("]}");
+    }
+    out.push_str("]}");
+    leak(out, out_len)
+}
+
+/// JSON-строка -> буфер наружу: содержимое забываем, длину пишем в out_len.
+/// ABI-протокол упаковки входа (u32 count, [имя][флаг C][текст] на вход)
+/// общий с `gostpadi_render_batch`; сама выдача покрыта тестами
+/// `render_tight_batch`/`render_drawio_batch` в pipeline — этот модуль
+/// компилируется только под wasm32, где `cargo test` не работает.
+fn leak(out: String, out_len: *mut usize) -> *mut u8 {
+    let boxed = out.into_bytes().into_boxed_slice();
+    let p = boxed.as_ptr() as *mut u8;
+    let n = boxed.len();
+    std::mem::forget(boxed);
+    unsafe { *out_len = n };
+    p
+}

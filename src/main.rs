@@ -4,7 +4,9 @@ use std::process;
 
 use gostpadi::error::ParseError;
 use gostpadi::ir::Node;
-use gostpadi::layout::{crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok};
+use gostpadi::layout::{
+    crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok,
+};
 use gostpadi::pipeline::{self, Options};
 
 use std::io::Write;
@@ -52,23 +54,49 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
     --lw=N          толщина линий и усиков стрелок (по умолчанию 1.0)
     --no-split      не резать длинную схему на листы: один лист, в А4
                     вписывает общий масштаб пачки (для вставки в отчёт)
+    --trim          в отчёт: SVG ровно по содержимому, размер в мм,
+                    без листа А4 и без ужатия
+    --drawio        файл draw.io (.drawio) с редактируемыми блоками
     --check         только проверить, не рисовать
     --template      заготовка .gvn на stdout
     -h, --help      эта справка
     -V, --version   версия
 ";
 
-const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--check] [--template] [-h] [-V]";
+const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
 
-/// Базовый путь результата входа: ".../stem.svg" (суффиксы листов добавит
-/// page_path). Папкой считается -o с косой чертой или существующая папка;
-/// пачка с голым именем кладёт результат рядом с каждым входом; у
-/// одинаковых stem имя родительской папки — префикс.
-fn base_for(inp: &str, output: Option<&str>, folder: bool, batch: bool, dup: bool) -> PathBuf {
+/// Базовый путь результата схемы: ".../stem.svg" (суффиксы листов добавит
+/// page_path). Имя схемы несёт и вход, и функцию («1/main.c#main») —
+/// папкой считается -o с косой чертой или существующая папка; пачка с
+/// голым именем кладёт результат рядом с каждым входом; у одинаковых
+/// stem имя родительской папки — префикс.
+fn base_for(
+    inp: &str,
+    fun: Option<&str>,
+    output: Option<&str>,
+    folder: bool,
+    batch: bool,
+    dup: bool,
+) -> PathBuf {
     let mut stem = Path::new(inp)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
+    // функция в имени, чтобы main.c#add и main.c#mul не перезаписали
+    // друг друга: имя Linux-безопасное
+    if let Some(f) = fun.filter(|f| !f.is_empty()) {
+        let safe: String = f
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        stem = format!("{stem}-{safe}");
+    }
     if folder && dup {
         if let Some(parent) = Path::new(inp).parent().and_then(|p| p.file_name()) {
             stem = format!("{}-{}", parent.to_string_lossy(), stem);
@@ -135,6 +163,8 @@ fn main() {
     let mut font: Option<f64> = None;
     let mut lw: Option<f64> = None;
     let mut no_split = false;
+    let mut trim = false;
+    let mut drawio = false;
     let mut check = false;
     let mut template = false;
 
@@ -153,6 +183,8 @@ fn main() {
             "--template" => template = true,
             "--check" => check = true,
             "--no-split" => no_split = true,
+            "--trim" => trim = true,
+            "--drawio" => drawio = true,
             "-o" | "--output" => {
                 i += 1;
                 if i >= argv.len() {
@@ -226,10 +258,15 @@ fn main() {
             Err((path, e)) => die_parse(&path, &e),
         };
         let multi = schemes.len() > 1;
-        for (inp, (_, nodes)) in inputs.iter().zip(&schemes) {
+        for (scheme, nodes) in &schemes {
+            let (inp, fun) = pipeline::scheme_parts(scheme);
+            let name = match fun {
+                Some(f) => format!("{inp}#{f}"),
+                None => inp.to_string(),
+            };
             let l = layout(nodes, &normalize(nodes, &st), &st);
             let bad = |msg: String| -> ! {
-                eprintln!("{inp}: {msg}");
+                eprintln!("{name}: {msg}");
                 process::exit(1);
             };
             if let Err(e) = crossings_ok(&l.shapes, &l.edges) {
@@ -245,7 +282,7 @@ fn main() {
                 bad("в «конец» входит не одна стрелка".into());
             }
             if multi {
-                out(&format!("{inp}: ok: {} blocks\n", nodes.len()));
+                out(&format!("{name}: ok: {} blocks\n", nodes.len()));
             } else {
                 out(&format!("ok: {} blocks\n", nodes.len()));
             }
@@ -296,11 +333,37 @@ fn main() {
         .any(|s| stems.iter().filter(|t| *t == s).count() > 1);
 
     let mut failed = parse_failed;
-    for ((_, pages), inp) in pipeline::render_batch(schemes, &st)
-        .into_iter()
-        .zip(&inputs)
-    {
-        let base = base_for(inp, output.as_deref(), folder, inputs.len() > 1, dup);
+    // --trim и --drawio отдают по одному файлу на схему, без листа А4:
+    // лист удобен для печати, но в отчёт его не вставишь — схема
+    // занимает часть страницы, а вокруг пустое поле. tight — размер в
+    // миллиметрах без ужатия, drawio — редактируемые блоки.
+    if trim || drawio {
+        let produced = if drawio {
+            pipeline::render_drawio_batch(schemes, &st)
+        } else {
+            pipeline::render_tight_batch(schemes, &st)
+        };
+        let ext = if drawio { "drawio" } else { "svg" };
+        for (scheme, data) in produced {
+            let (inp, fun) = pipeline::scheme_parts(&scheme);
+            let base = base_for(inp, fun, output.as_deref(), folder, inputs.len() > 1, dup)
+                .with_extension(ext);
+            if let Err(e) = std::fs::write(&base, data) {
+                eprintln!("не удалось записать {}: {e}", base.display());
+                failed = true;
+                continue;
+            }
+            out(&format!("{}\n", base.display()));
+        }
+        if failed {
+            process::exit(1);
+        }
+        return;
+    }
+
+    for (scheme, pages) in pipeline::render_batch(schemes, &st) {
+        let (inp, fun) = pipeline::scheme_parts(&scheme);
+        let base = base_for(inp, fun, output.as_deref(), folder, inputs.len() > 1, dup);
         for (k, svg) in pages.iter().enumerate() {
             let target = page_path(&base, k);
             if let Err(e) = std::fs::write(&target, svg) {

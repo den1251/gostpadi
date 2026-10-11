@@ -1,12 +1,13 @@
 //! Сборка пайплайна: текст (.gvn или C) -> узлы -> страницы SVG.
 //! Геометрия живёт в layout, отрисовка в generate; здесь только склейка.
 
+use crate::drawio::book;
 use crate::error::ParseError;
-use crate::frontend::c::c_to_gvn;
+use crate::frontend::c::c_to_gvn_functions;
 use crate::frontend::gvn::parse;
-use crate::generate::{fit_scale, render_svg_at};
+use crate::generate::{fit_scale, render_svg_at, render_svg_tight};
 use crate::ir::Node;
-use crate::layout::{layout, normalize, split_scheme, uniform_sizes, Layout, Sizes};
+use crate::layout::{layout, normalize, split_scheme, uniform_sizes, Edge, Label, Layout, Sizes};
 use crate::style::Style;
 
 pub struct Options {
@@ -27,17 +28,17 @@ impl Options {
     }
 }
 
-fn to_nodes(text: &str, is_c: bool, opts: &Options, st: &Style) -> Result<Vec<Node>, ParseError> {
-    let gvn = if is_c {
-        c_to_gvn(text, &opts.labels)?
-    } else {
-        text.to_string()
-    };
-    parse(&gvn, st, &opts.labels)
+/// Путь схемы -> (вход, функция): «dir/main.c#main» -> («dir/main.c», Some("main")).
+/// Функции нет (gvn-вход) — второй элемент None.
+pub fn scheme_parts(path: &str) -> (&str, Option<&str>) {
+    path.split_once('#')
+        .map_or((path, None), |(a, b)| (a, Some(b)))
 }
 
 /// Пачка входов (путь, текст, это C?) -> (путь, узлы).
 /// Ошибка разбора возвращается вместе с путём входа.
+/// C-вход с несколькими функциями даёт по схеме на функцию:
+/// путь схемы «файл.c#имя_функции» (решение 06.10: рисуем все функции).
 pub fn parse_batch(
     inputs: &[(String, String, bool)],
     opts: &Options,
@@ -45,12 +46,139 @@ pub fn parse_batch(
     let st = opts.style();
     let mut out = Vec::with_capacity(inputs.len());
     for (path, text, is_c) in inputs {
-        match to_nodes(text, *is_c, opts, &st) {
-            Ok(nodes) => out.push((path.clone(), nodes)),
+        let res = if *is_c {
+            c_to_gvn_functions(text, &opts.labels).and_then(|fs| {
+                fs.into_iter()
+                    .map(|(fname, gvn)| {
+                        // main — схема самого входа (main.c -> main.svg),
+                        // прочие функции получают суффикс: main.c#add ->
+                        // main-add.svg, иначе схема main переписала бы их
+                        let scheme_path = if fname == "main" {
+                            path.clone()
+                        } else {
+                            format!("{path}#{fname}")
+                        };
+                        parse(&gvn, &st, &opts.labels).map(|n| (scheme_path, n))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+        } else {
+            parse(text, &st, &opts.labels).map(|n| vec![(path.clone(), n)])
+        };
+        match res {
+            Ok(mut s) => out.append(&mut s),
             Err(e) => return Err((path.clone(), e)),
         }
     }
     Ok(out)
+}
+
+/// Экспорт для отчёта: `render_tight_batch` — SVG по содержимому в
+/// миллиметрах (одна схема на вход, вставка «миллиметр в миллиметр»),
+/// `render_drawio_batch` — книга draw.io с редактируемыми блоками.
+/// Оба идут через ту же раскладку, что и экран: вид один, отличается
+/// только вывод.
+
+/// Узлы пачки -> раскладки, общие на все файлы: размеры фигур
+/// единые (uniform_sizes), как у обычного рендера.
+fn export_layouts(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, Vec<Layout>)> {
+    let normed: Vec<Sizes> = schemes.iter().map(|(_, n)| normalize(n, st)).collect();
+    let sizes = uniform_sizes(&normed);
+    schemes
+        .into_iter()
+        .map(|(path, nodes)| {
+            // порезка не нужна: страниц нет, схема одна
+            let st = Style {
+                no_split: true,
+                ..st.clone()
+            };
+            (path, vec![layout(&nodes, &sizes, &st)])
+        })
+        .collect()
+}
+
+/// SVG по содержимому, без листа: для вставки в отчёт.
+pub fn render_tight_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, String)> {
+    export_layouts(schemes, st)
+        .into_iter()
+        .map(|(path, parts)| {
+            let joined = join_parts(&parts);
+            (path, render_svg_tight(&joined, st))
+        })
+        .collect()
+}
+
+/// Книга draw.io по той же пачке: один файл со всеми листами.
+pub fn render_drawio_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, String)> {
+    export_layouts(schemes.clone(), st)
+        .into_iter()
+        .map(|(path, parts)| {
+            let stem = std::path::Path::new(&path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            let numbered: Vec<(String, Layout)> = parts
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (format!("Лист {}", i + 1), l.clone()))
+                .collect();
+            let xml = book(&stem, &numbered, st);
+            (path, xml)
+        })
+        .collect()
+}
+
+/// Склеивает части порезки в одну раскладку: вертикальные смещения
+/// частей складываются, иначе блоки наложатся.
+fn join_parts(parts: &[Layout]) -> Layout {
+    let Some(first) = parts.first() else {
+        return Layout::default();
+    };
+    if parts.len() == 1 {
+        return first.clone();
+    }
+    let mut out = first.clone();
+    let mut shift = 0.0f64;
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            shift = part.bounds.1 - (out.bounds.1 + out.bounds.3);
+        }
+        for sh in &part.shapes {
+            let mut sh = sh.clone();
+            sh.cy += shift;
+            out.shapes.push(sh);
+        }
+        for e in &part.edges {
+            out.edges.push(Edge {
+                points: e.points.iter().map(|(x, y)| (*x, y + shift)).collect(),
+                arrow: e.arrow,
+            });
+        }
+        for lb in &part.labels {
+            out.labels.push(Label {
+                x: lb.x,
+                y: lb.y + shift,
+                text: lb.text.clone(),
+                ha: lb.ha.clone(),
+            });
+        }
+    }
+    let xs: Vec<f64> = out
+        .shapes
+        .iter()
+        .flat_map(|sh| [sh.cx - sh.w / 2.0, sh.cx + sh.w / 2.0])
+        .collect();
+    let ys: Vec<f64> = out
+        .shapes
+        .iter()
+        .flat_map(|sh| [sh.cy - sh.h / 2.0, sh.cy + sh.h / 2.0])
+        .collect();
+    let minx = xs.iter().cloned().fold(f64::MAX, f64::min);
+    let miny = ys.iter().cloned().fold(f64::MAX, f64::min);
+    let maxx = xs.iter().cloned().fold(f64::MIN, f64::max);
+    let maxy = ys.iter().cloned().fold(f64::MIN, f64::max);
+    out.bounds = (minx, miny, maxx - minx, maxy - miny);
+    out
 }
 
 /// Узлы из parse_batch + стиль -> (путь, страницы SVG). Длинные схемы
@@ -255,5 +383,42 @@ mod tests {
         rb.sort_by(|a, b| a.partial_cmp(b).unwrap());
         rb.dedup();
         assert!(ra.iter().all(|d| rb.contains(d)), "{ra:?} vs {rb:?}");
+    }
+
+    /// Экспорт для отчёта: SVG по содержимому — без листа и без
+    /// вписывания, размер в миллиметрах (в Word встаёт 1:1).
+    #[test]
+    fn tight_export_has_mm_and_no_scaling() {
+        let schemes = parse_batch(
+            &[(
+                "a.gvn".into(),
+                "input scanf(1)\nx = 2\noutput printf(3)\n".into(),
+                false,
+            )],
+            &opts(),
+        )
+        .unwrap();
+        let out = render_tight_batch(schemes, &opts().style());
+        assert_eq!(out.len(), 1);
+        let svg = &out[0].1;
+        assert!(svg.contains("width=\"") && svg.contains("mm\""), "нет мм");
+        assert!(!svg.contains("scale("), "tight-экспорт без вписывания");
+        assert!(svg.contains("<rect"), "нет подложки");
+    }
+
+    /// Draw.io-книга — редактируемый XML со ГОСТ-формами, одна на вход.
+    #[test]
+    fn drawio_export_is_editable_mxfile() {
+        let schemes =
+            parse_batch(&[("a.gvn".into(), "x = 1\ny = 2\n".into(), false)], &opts()).unwrap();
+        let out = render_drawio_batch(schemes, &opts().style());
+        assert_eq!(out.len(), 1);
+        let xml = &out[0].1;
+        assert!(xml.contains("<mxfile host=\"gostpadi\">"));
+        assert!(xml.contains("vertex=\"1\""), "блоки не редактируемые");
+        assert!(
+            xml.matches("<diagram ").count() == 1,
+            "одна схема — один diagram"
+        );
     }
 }

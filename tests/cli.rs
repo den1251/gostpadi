@@ -306,3 +306,74 @@ fn invalid_font_lw_exits_two() {
         assert!(!err.is_empty(), "{flag}: нет сообщения");
     }
 }
+
+/// Функции файла рисуются все: main — схема входа, helper'ы — свои
+/// файлы с суффиксом. Молча терять helper'ы или отказывать файлу без
+/// main нельзя — решение 06.10.
+#[test]
+fn all_functions_of_file_get_own_scheme() {
+    let d = tmp("functions");
+    let f = d.join("two.c");
+    fs::write(&f, "int add(int a, int b) { return a + b; }\nint main() { printf(\"%d\", add(2, 3)); return 0; }").unwrap();
+    let out = run(&[f.to_str().unwrap(), "-o", d.join("o/").to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(d.join("o/two.svg").exists(), "main — схема входа");
+    assert!(d.join("o/two-add.svg").exists(), "helper — свой файл");
+}
+
+/// Файл без main, но с функцией — не отказ.
+#[test]
+fn file_without_main_still_draws() {
+    let d = tmp("no-main");
+    let f = d.join("helper.c");
+    fs::write(&f, "int helper(int x) { return x * 2; }").unwrap();
+    let out = run(&[f.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        d.join("helper-helper.svg").exists(),
+        "схема единственной функции"
+    );
+}
+
+/// --trim: SVG по содержимому — миллиметры, без `<g transform>` (без
+/// ужатия) и без листа А4 вокруг.
+#[test]
+fn trim_gives_mm_svg_without_scaling() {
+    let d = tmp("trim");
+    let f = d.join("t.gvn");
+    fs::write(&f, OK_GVN).unwrap();
+    let out = run(&["--trim", f.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let svg = fs::read_to_string(d.join("t.svg")).unwrap();
+    assert!(svg.contains("mm\""), "размер в миллиметрах");
+    assert!(!svg.contains("scale("), "без вписывания: {svg}");
+}
+
+/// --drawio: редактируемый mxGraph XML, а не картинка.
+#[test]
+fn drawio_gives_editable_mxfile() {
+    let d = tmp("drawio");
+    let f = d.join("t.gvn");
+    fs::write(&f, OK_GVN).unwrap();
+    let out = run(&["--drawio", f.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let xml = fs::read_to_string(d.join("t.drawio")).unwrap();
+    assert!(xml.contains("<mxfile host=\"gostpadi\">"), "не mxfile");
+    assert!(xml.contains("vertex=\"1\""), "блоки не редактируемые");
+}

@@ -69,6 +69,61 @@ pub fn c_to_gvn(src: &str, labels: &str) -> Result<String, ParseError> {
     Ok(out)
 }
 
+/// Код C -> по схеме .gvn на КАЖДУЮ функцию с телом: (имя, gvn).
+/// Раньше рисовался только main: файл с helper-функциями терял их
+/// молча, а файл без main отказ. Теперь все функции — своя схема,
+/// имя несёт «файл#функция».
+pub fn c_to_gvn_functions(src: &str, labels: &str) -> Result<Vec<(String, String)>, ParseError> {
+    let prepared = prepare(src);
+    let config = Config {
+        cpp_command: String::new(),
+        cpp_options: Vec::new(),
+        flavor: Flavor::StdC11,
+    };
+    let ast = match parse_preprocessed(&config, prepared.clone()) {
+        Ok(p) => p,
+        Err(e) => return Err(syntax_err(e, src)),
+    };
+    let mut out = Vec::new();
+    for ext in &ast.unit.0 {
+        let ExternalDeclaration::FunctionDefinition(f) = &ext.node else {
+            continue;
+        };
+        let Some(name) = declarator_name(&f.node.declarator) else {
+            continue;
+        };
+        let Statement::Compound(items) = &f.node.statement.node else {
+            continue;
+        };
+        let ctx = Ctx {
+            src: &prepared,
+            orig: src,
+            labels,
+        };
+        let stmts = ctx.items(items)?;
+        let mut nodes = Vec::new();
+        for s in stmts {
+            match s {
+                // верхнеуровневый return не рисуем: терминатор «конец» и так завершает схему
+                Stmt::Return(_) => {}
+                Stmt::Tile { kind, text } => nodes.push(Node::new(NodeKind::from(kind), text)),
+                Stmt::Break => nodes.push(Node::new(NodeKind::Act, "break")),
+                Stmt::Continue => nodes.push(Node::new(NodeKind::Act, "continue")),
+                Stmt::Node(n) => nodes.push(*n),
+            }
+        }
+        let mut gvn = String::from("#gostpadi 1\n");
+        emit_nodes(&nodes, 0, &mut gvn);
+        out.push((name, gvn));
+    }
+    if out.is_empty() {
+        return Err(ParseError::new(
+            "в коде нет ни одной функции с телом — рисовать нечего",
+        ));
+    }
+    Ok(out)
+}
+
 fn emit_nodes(nodes: &[Node], depth: usize, out: &mut String) {
     for n in nodes {
         pad(out, depth);

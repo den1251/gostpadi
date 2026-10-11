@@ -1,5 +1,4 @@
 use super::ctx::{BreakAt, ColEnd, Ctx};
-use super::geometry::up;
 use super::types::Anchor;
 use crate::ir::Node;
 
@@ -33,10 +32,10 @@ impl Ctx<'_> {
         let num = self.loop_depth;
         // коридор: шире половины трапеции и любого вложенного содержимого,
         // чтобы рельсы break/continue не задевали фигуры
-        let chan = up(self.nhe.max(lw / 2.0) + 2.0 * self.st.grid, self.st.grid);
         let top0 = cy1 + lh / 2.0 + self.st.vgap;
         let mark = self.breaks.len();
         let mark_c = self.continues.len();
+        let mark_sh = self.shapes.len();
         let saved_direct = self.case_direct;
         self.case_direct = false;
         let (yend, end) = match &nd.body {
@@ -55,6 +54,17 @@ impl Ctx<'_> {
         }
         let merge = cy2 + lh / 2.0 + self.st.mgap;
         self.edge(&[(tx, cy2 + lh / 2.0), (tx, merge)], false);
+        // Фактический левый край тела: рельсы дренажа (continue/break)
+        // идут левее ВСЕХ нарисованных фигур тела. Мерять коридор от
+        // nhe нельзя: вложенные if/switch дают колонки шире оценки
+        // extent, и вертикаль рельсы садилась на плитку (u3.c: continue
+        // внутри while -> ребро сквозь io-блок). Своим краем входит и
+        // трапеция: рельса обязана обойти и её.
+        let body_left = self.shapes[mark_sh..]
+            .iter()
+            .map(|s| s.cx - s.w / 2.0)
+            .fold(f64::INFINITY, f64::min)
+            .min(tx - lw / 2.0);
         // Рельсы break: вниз мимо loop_end, T-стык на продолжении.
         //
         // Колонка плитки (b.tx) уже своя ось: если она не накрыта трапецией
@@ -77,7 +87,7 @@ impl Ctx<'_> {
                 self.edge(&[(b.tx, b.y), (b.tx, merge), (tx, merge)], false);
                 continue;
             }
-            let rx = tx - chan - slot as f64 * 2.0 * self.st.grid;
+            let rx = body_left - self.st.grid * (slot as f64 + 1.0);
             let mut pts = vec![(b.tx, b.y)];
             if b.from_tile {
                 let by = b.y + self.st.vgap;
@@ -98,7 +108,7 @@ impl Ctx<'_> {
             for c in &conts {
                 let slot = self.break_slot;
                 self.break_slot += 1;
-                let rx = tx - chan - slot as f64 * 2.0 * self.st.grid;
+                let rx = body_left - self.st.grid * (slot as f64 + 1.0);
                 self.edge(&[(c.tx, c.y), (rx, c.y), (rx, yj), (tx, yj)], false);
             }
         }

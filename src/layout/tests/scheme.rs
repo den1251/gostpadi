@@ -1406,3 +1406,59 @@ output printf(\"далее\")
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
 }
+
+/// Рельса continue внутри while с вложенными if (меню пользователя):
+/// коридор дренажа меряется от фактического левого края тела, иначе
+/// вертикаль рельсы проходит сквозь io-плитку колонки ветви
+/// (u3.c: ребро (-481.78, 935)-(-481.78, 2153) сквозь блок).
+#[test]
+fn continue_rail_inside_nested_if_loop_misses_shapes() {
+    // while { io; if {да: [io, continue]}; if {да: [io, if {да: [io, continue]}]} }
+    let mut inner = node(NodeKind::Decision, "if (scanf_s(...) != 1 (a <= 0))");
+    inner.branches = vec![
+        br(
+            "да",
+            vec![sio("printf(\"oshibka a\")"), Stmt::Continue],
+            false,
+        ),
+        br("нет", vec![], false),
+    ];
+    let mut mid = node(NodeKind::Decision, "if (choice == 1)");
+    mid.branches = vec![
+        br(
+            "да",
+            vec![sio("printf(\"vvedite a: \")"), Stmt::Node(Box::new(inner))],
+            false,
+        ),
+        br("нет", vec![], false),
+    ];
+    let mut top = node(NodeKind::Decision, "if (scanf_s(...) != 1)");
+    top.branches = vec![
+        br(
+            "да",
+            vec![sio("printf(\"oshibka\")"), Stmt::Continue],
+            false,
+        ),
+        br("нет", vec![], false),
+    ];
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        loop_node(
+            "while 1",
+            vec![
+                sio("printf(\"menu\")"),
+                Stmt::Node(Box::new(top)),
+                Stmt::Node(Box::new(mid)),
+            ],
+        ),
+        node(NodeKind::Term, "конец"),
+    ];
+    let l = lay(&nodes);
+    if let Err(e) = crossings_ok(&l.shapes, &l.edges) {
+        panic!("рельса дренажа заходит на блок: {e}");
+    }
+    if let Err(e) = crate::layout::dangling_ok(&l) {
+        panic!("обрыв линии: {e}");
+    }
+    assert!(overlaps_ok(&l.shapes));
+}
