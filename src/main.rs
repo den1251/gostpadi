@@ -4,7 +4,7 @@ use std::process;
 
 use gostpadi::error::ParseError;
 use gostpadi::ir::Node;
-use gostpadi::layout::{crossings_ok, layout, normalize, overlaps_ok, single_entry_ok};
+use gostpadi::layout::{crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok};
 use gostpadi::pipeline::{self, Options};
 
 use std::io::Write;
@@ -234,6 +234,9 @@ fn main() {
             };
             if let Err(e) = crossings_ok(&l.shapes, &l.edges) {
                 bad(format!("линии заходят на блоки: {e}"));
+            }
+            if let Err(e) = dangling_ok(&l) {
+                bad(format!("обрыв линии: {e}"));
             }
             if !overlaps_ok(&l.shapes) {
                 bad("фигуры перекрываются".into());

@@ -1092,6 +1092,36 @@ if a < 0
     assert!(single_entry_ok(&l));
 }
 
+/// Каскад с пустым хвостом: две else-if по умолчанию — но «да» первой
+/// (пустая плитка) и вложенный if в «нет»: именно та форма, в которой
+/// коридор стороны считался только по обходам и оставлял «да» первого
+/// ромба висеть в воздухе (u1-7: отрезок из левой вершины без стыка).
+/// Инвариант: ни один конец ребра не висит в пустоте.
+#[test]
+fn elseif_cascade_first_branch_not_dangling() {
+    let st = Style::default();
+    let text = "\
+if d2 == r2
+    да:
+    printf(\"na okruzhnosti\")
+    нет:
+    if d2 < r2
+        да:
+        printf(\"vnutri\")
+        нет:
+        printf(\"vne\")
+";
+    let nodes = crate::frontend::gvn::parse(text, &st, "ru").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let l = layout(&nodes, &sizes, &st);
+    if let Err(e) = crate::layout::dangling_ok(&l) {
+        panic!("обрыв в каскаде else-if: {e}");
+    }
+    assert_eq!(crossings_ok(&l.shapes, &l.edges), Ok(()));
+    assert!(overlaps_ok(&l.shapes));
+    assert!(single_entry_ok(&l));
+}
+
 /// Большой переключатель (>= 5 кейсов): кейсы сеткой по два на ряд —
 /// все колонки на ±base, второй ряд ниже первого; ряды слиты в ствол.
 #[test]

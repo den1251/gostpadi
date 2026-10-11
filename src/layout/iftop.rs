@@ -474,15 +474,25 @@ impl Ctx<'_> {
         // ветки каскада — не кейс-колонки: break в них не растворяется
         let saved_direct = self.case_direct;
         self.case_direct = false;
-        // общий вертикальный участок стороны: от высшей точки обхода до
-        // низшей ветви, один раз; ветви-ответвления в него не рисуются
+        // общий вертикальный участок стороны: от высшей точки крепления
+        // (стык на cy и/или обход над колонками) до низшей, один раз;
+        // ветви-ответвления в него не рисуются. Верх берётся и от cy:
+        // стык первой левой колонки сидит на cy0, которая ВЫШЕ обхода
+        // (top0 - 3g) — коридор, не накрывающий её, оставлял «yes»
+        // первого ромба каскада оборванным в воздухе.
         for sgn in [-1.0, 1.0] {
             let side: Vec<&(f64, f64, f64, usize)> = ins.iter().filter(|e| e.0 == sgn).collect();
             if side.is_empty() {
                 continue;
             }
-            let y_top = side.iter().map(|e| y_over(e.3)).fold(f64::MAX, f64::min);
-            let y_bot = side.iter().map(|e| e.2).fold(f64::MIN, f64::max);
+            let y_top = side
+                .iter()
+                .map(|e| e.2.min(y_over(e.3)))
+                .fold(f64::MAX, f64::min);
+            let y_bot = side
+                .iter()
+                .map(|e| e.2.max(y_over(e.3)))
+                .fold(f64::MIN, f64::max);
             self.edge(&[(sgn * x_v, y_top), (sgn * x_v, y_bot)], false);
         }
         for &(sgn, tx, cy, ci) in &ins {
