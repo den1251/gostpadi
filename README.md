@@ -168,7 +168,7 @@ Rust, вывод — SVG без промежуточных растров. Ко�
 ## Разработка
 
 ```bash
-cargo test                                 # 134 теста: парсер, раскладка, рендер, CLI
+cargo test                                 # 153 теста: парсер, раскладка, рендер, CLI
 cargo clippy --all-targets -- -D warnings  # линтер
 cargo fmt --check                          # форматирование
 ```
