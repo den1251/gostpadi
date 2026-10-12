@@ -129,22 +129,27 @@ fn starts_with_if_or_switch(s: &str) -> bool {
     false
 }
 
+/// Ключевые слова циклов в формате `.gvn`. Единственный список:
+/// `starts_with_while_or_for` и `cycle` сверяются с ним, писатель
+/// C-фронтенда берёт отсюда же через `Node::loop_label`. Раньше
+/// «while» и «for» были вписаны в двух местах по отдельности, и
+/// «do-while» терялся при таком рассинхроне.
+const LOOP_KEYWORDS: [(&str, LoopKind); 3] = [
+    ("while", LoopKind::While),
+    ("do-while", LoopKind::DoWhile),
+    ("for", LoopKind::For),
+];
+
+fn loop_keyword(s: &str) -> Option<(&'static str, LoopKind)> {
+    LOOP_KEYWORDS.iter().find_map(|(kw, kind)| {
+        let r = s.strip_prefix(*kw)?;
+        let ch = r.chars().next()?;
+        (ch == ' ' || ch == '(').then_some((*kw, *kind))
+    })
+}
+
 fn starts_with_while_or_for(s: &str) -> bool {
-    if let Some(r) = s.strip_prefix("while") {
-        if r.is_empty() {
-            return false;
-        }
-        let ch = r.chars().next().unwrap();
-        return ch == ' ' || ch == '(';
-    }
-    if let Some(r) = s.strip_prefix("for") {
-        if r.is_empty() {
-            return false;
-        }
-        let ch = r.chars().next().unwrap();
-        return ch == ' ' || ch == '(';
-    }
-    false
+    loop_keyword(s).is_some()
 }
 
 fn is_return(s: &str) -> bool {
@@ -439,11 +444,11 @@ impl<'a> Parser<'a> {
             rest = rest[1..rest.len() - 1].trim().to_string();
         }
         let text = wrap(&rest, self.style.max_chars);
-        let loop_kind = if kw == "while" {
-            Some(LoopKind::While)
-        } else {
-            Some(LoopKind::For)
-        };
+        let loop_kind = Some(match kw.as_str() {
+            "while" => LoopKind::While,
+            "do-while" => LoopKind::DoWhile,
+            _ => LoopKind::For,
+        });
         let mut nd = Node::new(NodeKind::Loop, text);
         nd.loop_kind = loop_kind;
         nd.lang = self.labels.clone();
@@ -597,6 +602,14 @@ pub fn parse(text: &str, style: &Style, labels: &str) -> Result<Vec<Node>, Parse
     }
 
     nodes.push(Node::new(NodeKind::Term, end_txt));
+    // Схема из одной пары «начало → конец» не несёт информации и
+    // выглядит ошибкой движка. Единое правило с C-путём: пустая
+    // схема — отказ, а не рисунок двух терминаторов.
+    if nodes.len() <= 2 {
+        return Err(ParseError::new(
+            "схема пустая — рисовать нечего (нет ни одной плитки)",
+        ));
+    }
     Ok(nodes)
 }
 
@@ -791,4 +804,15 @@ mod tests {
         let v2 = split_statements("printf(\"a; b\"); return 1");
         assert_eq!(v2.len(), 2);
     }
+}
+
+/// Пустая .gvn (только заголовок) — отказ, а не «Start → End».
+#[test]
+fn empty_gvn_is_refused() {
+    let st = Style::default();
+    let e = parse("#gostpadi 1\n", &st, "en").unwrap_err();
+    assert!(e.msg.contains("пустая"), "{}", e.msg);
+    // и с одними комментариями — тот же отказ
+    let e2 = parse("#gostpadi 1\n// только комментарий\n", &st, "en").unwrap_err();
+    assert!(e2.msg.contains("пустая"), "{}", e2.msg);
 }

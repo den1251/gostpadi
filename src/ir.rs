@@ -9,10 +9,14 @@ pub enum NodeKind {
     Conn,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopKind {
     While,
     For,
+    /// тело выполняется до первой проверки условия: рисуется тем же
+    /// шестиугольником, но текст заголовка несёт «do while» — без
+    /// подписи цикл врал бы, что проверка идёт первой
+    DoWhile,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +78,9 @@ impl Node {
         match self.loop_kind {
             Some(LoopKind::While) => format!("while {}", self.text),
             Some(LoopKind::For) => format!("for {}", self.text),
+            // проверка идёт после тела — слово «do» обязательно, иначе
+            // шестиугольник врёт, что проверка первая
+            Some(LoopKind::DoWhile) => format!("do while {}", self.text),
             None => self.text.clone(),
         }
     }

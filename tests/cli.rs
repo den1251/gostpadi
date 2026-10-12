@@ -308,13 +308,18 @@ fn invalid_font_lw_exits_two() {
 }
 
 /// Функции файла рисуются все: main — схема входа, helper'ы — свои
-/// файлы с суффиксом. Молча терять helper'ы или отказывать файлу без
-/// main нельзя — решение 06.10.
+/// файлы с суффиксом. Функция из одних return теряться не должна —
+/// но и пустой схемой «Start → End» не рисуется (T7): в helper'е
+/// должна быть хотя бы одна рисуемая операция.
 #[test]
 fn all_functions_of_file_get_own_scheme() {
     let d = tmp("functions");
     let f = d.join("two.c");
-    fs::write(&f, "int add(int a, int b) { return a + b; }\nint main() { printf(\"%d\", add(2, 3)); return 0; }").unwrap();
+    fs::write(
+        &f,
+        "int add(int a, int b) { int s = a + b; return s; }\nint main() { printf(\"%d\", add(2, 3)); return 0; }",
+    )
+    .unwrap();
     let out = run(&[f.to_str().unwrap(), "-o", d.join("o/").to_str().unwrap()]);
     assert!(
         out.status.success(),
@@ -325,12 +330,17 @@ fn all_functions_of_file_get_own_scheme() {
     assert!(d.join("o/two-add.svg").exists(), "helper — свой файл");
 }
 
-/// Файл без main, но с функцией — не отказ.
+/// Файл без main, но с функцией — не отказ: единственная функция
+/// файла и есть схема.
 #[test]
 fn file_without_main_still_draws() {
     let d = tmp("no-main");
     let f = d.join("helper.c");
-    fs::write(&f, "int helper(int x) { return x * 2; }").unwrap();
+    fs::write(
+        &f,
+        "int helper(int x) { int y = x * 2; printf(\"%d\", y); return y; }",
+    )
+    .unwrap();
     let out = run(&[f.to_str().unwrap()]);
     assert!(
         out.status.success(),
@@ -341,6 +351,34 @@ fn file_without_main_still_draws() {
         d.join("helper-helper.svg").exists(),
         "схема единственной функции"
     );
+}
+
+/// Пустой main (одни return) — не схема «Start → End», а честный отказ
+/// с кодом 2: рисовать нечего (репорт 11.10.2026).
+#[test]
+fn empty_main_is_refused_not_start_end() {
+    let d = tmp("empty-main");
+    let f = d.join("e.c");
+    fs::write(&f, "int main(void) { return 0; }").unwrap();
+    let out = run(&[f.to_str().unwrap()]);
+    assert!(!out.status.success(), "пустой main — отказ");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("нет рисуемых операторов"), "stderr: {}", err);
+    assert!(!d.join("e.svg").exists(), "схема не пишется");
+}
+
+/// Один helper без рисуемых операторов (только return) — отказ по
+/// всему файлу: пустышка пропускается, но если она единственная —
+/// рисовать нечего.
+#[test]
+fn file_of_only_empty_helper_is_refused() {
+    let d = tmp("helper-empty");
+    let f = d.join("h.c");
+    fs::write(&f, "int twice(int x) { return x * 2; }").unwrap();
+    let out = run(&[f.to_str().unwrap()]);
+    assert!(!out.status.success(), "пустышка — отказ");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("нет рисуемых операторов"), "stderr: {}", err);
 }
 
 /// --trim: SVG по содержимому — миллиметры, без `<g transform>` (без
@@ -376,4 +414,118 @@ fn drawio_gives_editable_mxfile() {
     let xml = fs::read_to_string(d.join("t.drawio")).unwrap();
     assert!(xml.contains("<mxfile host=\"gostpadi\">"), "не mxfile");
     assert!(xml.contains("vertex=\"1\""), "блоки не редактируемые");
+}
+
+/// do-while: полноценный цикл, а не отказ. Подпись «do while» видна в
+/// SVG (проверка идёт после тела — подпись обязательна).
+#[test]
+fn dowhile_renders_with_label() {
+    let d = tmp("dowhile");
+    let f = d.join("d.c");
+    fs::write(
+        &f,
+        "int main(void) { int i = 0; do { printf(\"%d\", i); i = i + 1; } while (i < 5); return 0; }",
+    )
+    .unwrap();
+    let out = run(&["--check", f.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    run(&[f.to_str().unwrap()]);
+    let svg = fs::read_to_string(d.join("d.svg")).unwrap();
+    assert!(svg.contains("do while"), "подпись do while в схеме: {svg}");
+}
+
+/// Пытка: 5 функций (static, void, argv, массивы), макросы (объектный,
+/// функциональный, многострочный с континуацией), else-if каскад с
+/// return в каждой ветке, do-while, break/continue в while+switch.
+/// Каждая функция — своя схема, все проходят --check.
+#[test]
+fn torture_file_draws_all_functions() {
+    let d = tmp("torture");
+    let f = d.join("t.c");
+    fs::write(
+        &f,
+        "\
+#include <stdio.h>
+#define PI 3.1415926535
+#define SQR(x) ((x) * (x))
+#define MULTI \\\n    printf(\"one\"); \\\n    printf(\"two\")
+
+static int twice(int x) { int r = x * 2; return r; }
+
+void greet(const char *n) { printf(\"Hi %s\\n\", n); }
+
+double area(double r) { double a = PI * SQR(r); return a; }
+
+int classify(int x) {
+    if (x < 0) return -1;
+    else if (x == 0) return 0;
+    else if (x < 100) return 1;
+    else return 2;
+}
+
+int main(int argc, char **argv) {
+    int choice = 0;
+    while (1) {
+        printf(\"menu\\n\");
+        if (scanf(\"%d\", &choice) != 1) continue;
+        if (choice == 1) { greet(argv[0]); }
+        else if (choice == 2) { printf(\"%d\\n\", twice(21)); }
+        else if (choice == 3) { printf(\"%lf\\n\", area(2.0)); }
+        else { printf(\"bye\\n\"); }
+        if (choice == 4) break;
+    }
+    int v[3] = {1, 2, 3};
+    int k = 0;
+    do {
+        if (k == 1) { k++; continue; }
+        k++;
+    } while (k < 3);
+    MULTI;
+    printf(\"%d %d\\n\", classify(5), v[0]);
+    return 0;
+}",
+    )
+    .unwrap();
+    let out = run(&[f.to_str().unwrap(), "-o", d.join("o/").to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for name in ["t", "t-twice", "t-greet", "t-area", "t-classify"] {
+        assert!(d.join(format!("o/{name}.svg")).exists(), "нет {name}.svg");
+    }
+    let out = run(&["--check", f.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "--check пытки: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Выключенная ветка #if 0 на схеме не появляется, #define с
+/// продолжением строки не роняет парсер.
+#[test]
+fn if0_and_continuations_render_clean() {
+    let d = tmp("if0");
+    let f = d.join("p.c");
+    fs::write(
+        &f,
+        "int main(void) {\n#if 0\n    printf(\"dead\");\n#endif\n#define MSG \\\n    \"hello\"\n    printf(MSG);\n    return 0;\n}",
+    )
+    .unwrap();
+    let out = run(&["--check", f.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    run(&[f.to_str().unwrap()]);
+    let svg = fs::read_to_string(d.join("p.svg")).unwrap();
+    assert!(!svg.contains("dead"), "выключенный код на схеме: {svg}");
+    assert!(svg.contains("printf(MSG)"), "живой код на схеме: {svg}");
 }

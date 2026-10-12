@@ -58,6 +58,12 @@ pub fn parse_c_to_nodes(src: &str, labels: &str) -> Result<Vec<Node>, ParseError
             Stmt::Node(n) => nodes.push(*n),
         }
     }
+    if nodes.is_empty() {
+        return Err(ParseError::new(
+            "в main нет рисуемых операторов — рисовать нечего (тело пусто \
+             или состоит из одних return/объявлений)",
+        ));
+    }
     Ok(nodes)
 }
 
@@ -112,13 +118,21 @@ pub fn c_to_gvn_functions(src: &str, labels: &str) -> Result<Vec<(String, String
                 Stmt::Node(n) => nodes.push(*n),
             }
         }
+        // пустое тело (одни объявления/return) рисует «Start → End» —
+        // схему без содержимого. Она не несёт информации и выглядит
+        // ошибкой движка, поэтому такую функцию пропускаем. Если в
+        // файле не осталось ни одной — отказ (honest > пустая схема).
+        if nodes.is_empty() {
+            continue;
+        }
         let mut gvn = String::from("#gostpadi 1\n");
         emit_nodes(&nodes, 0, &mut gvn);
         out.push((name, gvn));
     }
     if out.is_empty() {
         return Err(ParseError::new(
-            "в коде нет ни одной функции с телом — рисовать нечего",
+            "в коде нет рисуемых операторов — рисовать нечего (тела функций \
+             пусты или состоят из одних return/объявлений)",
         ));
     }
     Ok(out)
@@ -130,10 +144,14 @@ fn emit_nodes(nodes: &[Node], depth: usize, out: &mut String) {
         match n.kind {
             NodeKind::Loop => {
                 // keyword добавляем обратно: парсер .gvn снимает его сам
-                out.push_str(if n.loop_kind == Some(LoopKind::While) {
-                    "while "
-                } else {
-                    "for "
+                out.push_str(match n.loop_kind {
+                    Some(LoopKind::While) => "while ",
+                    Some(LoopKind::For) => "for ",
+                    // дефис: парсер .gvn режет ключевое слово по первому
+                    // пробелу/скобке, «do while i < 5» иначе распалось
+                    // бы на kw=«do» и хвост
+                    Some(LoopKind::DoWhile) => "do-while ",
+                    None => "",
                 });
                 out.push_str(&n.text);
                 out.push('\n');
@@ -319,7 +337,18 @@ impl<'a> Ctx<'a> {
                 Ok(vec![Stmt::Node(Box::new(nd))])
             }
             Statement::DoWhile(d) => {
-                Err(self.err("в коде цикл do-while — перепиши на while", d.span.start))
+                // тело выполняется ДО проверки условия — в отличие от
+                // while/for, где проверка первая. Слово «do while» несёт
+                // loop_label: шестиугольник один на все три вида цикла,
+                // и без подписи он врал бы, что проверка идёт первой.
+                let mut nd = Node::new(
+                    NodeKind::Loop,
+                    shorten_calls(&expr_text(self.src, &d.node.expression)),
+                );
+                nd.loop_kind = Some(LoopKind::DoWhile);
+                nd.lang = self.labels.to_string();
+                nd.body = Some(self.block_stmt(&d.node.statement)?);
+                Ok(vec![Stmt::Node(Box::new(nd))])
             }
             Statement::Goto(g) => Err(self.err("в коде goto — не поддерживается", g.span.start)),
             Statement::Return(e) => Ok(vec![Stmt::Return(match e {
@@ -596,19 +625,114 @@ fn strip_comments(src: &str) -> String {
 
 /// pyconverter-подготовка: снять комментарии и строки препроцессора.
 /// Директивы заменяются пустыми строками — нумерация строк сохраняется.
+///
+/// Континуации (`#define X \` + следующая строка) склеиваются в одну:
+/// раньше продолжение оставалась кодом и роняло парсер («неожидаемый
+/// токен do_something()»). Складка сохраняет число строк: продолжения
+/// уходят пустыми строками, иначе номера строк в ошибках съезжают.
+///
+/// Выключенные ветки (`#if 0 … #endif`) вырезаются вместе с телом —
+/// это закомментированный код, рисовать его нельзя. Ветки `#ifdef /
+/// #ifndef / #if 1` считаются включёнными: заголовочные файлы студент
+/// underscope подключает осознанно.
 fn prepare(src: &str) -> String {
-    let src = src.trim_start_matches('\u{feff}');
-    strip_comments(src)
-        .lines()
-        .map(|l| {
-            if l.trim_start().starts_with('#') {
+    let src = src.trim_start_matches('\u{feff}').to_string();
+    // 1) склеить континуации директив (число строк сохраняется)
+    let joined = join_continuations(&src).join("\n");
+    // 2) снять комментарии — по ВСЕМУ тексту: /* */ живёт через
+    //    построчно строки, и на перловой строке его не видно
+    let stripped = strip_comments(&joined);
+    // 3) вырезать выключенные ветки и сами директивы
+    let no_comments: Vec<String> = stripped.split('\n').map(str::to_string).collect();
+    // стек условий препроцессора: (ветка_живая, была_ли_else)
+    let mut cond: Vec<(bool, bool)> = Vec::new();
+    let disabled = |cond: &Vec<(bool, bool)>| cond.iter().any(|(on, _)| !on);
+    let mut out = Vec::with_capacity(no_comments.len());
+    for line in &no_comments {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix('#') else {
+            out.push(if disabled(&cond) {
                 String::new()
             } else {
-                expand_stdbool(l)
+                expand_stdbool(line)
+            });
+            continue;
+        };
+        let rest = rest.trim();
+        let word: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        match word.as_str() {
+            "if" | "ifdef" | "ifndef" => {
+                let parent_on = !disabled(&cond);
+                // литеральное условие: #if 0 выключен; #if 1/defined(X) включён
+                let on = match word.as_str() {
+                    "if" => {
+                        let arg = rest.strip_prefix("if").unwrap_or("").trim();
+                        !(arg == "0" || arg.is_empty())
+                    }
+                    _ => true, // ifdef/ifndef — включаем (заголовок есть)
+                };
+                cond.push((parent_on && on, false));
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            "else" => {
+                // по правилам C ветка else включается, когда if выключен:
+                // #if 0 … #else … #endif — тело else это ЖИВОЙ код
+                if let Some(top) = cond.last_mut() {
+                    if !top.1 {
+                        top.0 = !top.0;
+                        top.1 = true;
+                    }
+                }
+            }
+            "elif" => {
+                if let Some(top) = cond.last_mut() {
+                    if !top.1 {
+                        top.0 = true;
+                    }
+                }
+            }
+            "endif" => {
+                cond.pop();
+            }
+            _ => {}
+        }
+        out.push(String::new());
+    }
+    out.join("\n")
+}
+
+/// Склейка континуций: строка директивы, кончающаяся `\`, продолжается
+/// следующими физическими строками. Число строк сохраняется — каждой
+/// склеенной строке на выходе соответствует столько же строк входа
+/// (первая несёт склеенный текст, остальные пустые), иначе номера
+/// строк в сообщениях об ошибках съезжают.
+fn join_continuations(src: &str) -> Vec<String> {
+    let lines: Vec<&str> = src.split('\n').collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let mut acc = lines[i].to_string();
+        // только директивы продолжаются: '#' + ... + '\'
+        if acc.trim_start().starts_with('#') {
+            let mut consumed = 0;
+            while acc.trim_end().ends_with('\\') && i + 1 < lines.len() {
+                acc.pop(); // снять '\'
+                i += 1;
+                consumed += 1;
+                acc.push(' ');
+                acc.push_str(lines[i].trim_end());
+            }
+            out.push(acc);
+            // поглощённые строки уходят пустыми: нумерация цела
+            out.extend(std::iter::repeat(String::new()).take(consumed));
+        } else {
+            out.push(acc);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Вшитый контракт <stdbool.h> — те же три объектных макроса, что
@@ -1033,14 +1157,49 @@ mod tests {
     }
 
     #[test]
-    fn dowhile_and_goto_rejected() {
-        let e =
-            parse_c_to_nodes("int main(void) { do { x = 1; } while (x < 3); }", "en").unwrap_err();
-        assert!(e.msg.contains("do-while"), "{}", e.msg);
-        assert_eq!(e.line, Some(1));
+    /// do-while — полноценный цикл (не отказ, решение 28.09.2026,
+    /// восстановлено после откатa): рисуется той же парой трапеций,
+    /// но заголовок несёт «do while» — проверка идёт ПОСЛЕ тела.
+    fn dowhile_is_a_loop_and_goto_still_rejected() {
+        let nodes = parse_ok("int main(void) { do { x = 1; } while (x < 3); }");
+        let l = &nodes[0];
+        assert_eq!(l.kind, NodeKind::Loop);
+        assert_eq!(l.loop_kind, Some(LoopKind::DoWhile));
+        assert_eq!(l.loop_label(), "do while x < 3");
+        assert!(l.body.is_some(), "тело цикла на месте");
+        // goto по-прежнему отказ: развернуть его в схему нельзя
         let e2 = parse_c_to_nodes("int main(void) {\n  goto end;\n  end: ;\n}", "en").unwrap_err();
         assert!(e2.msg.contains("goto"), "{}", e2.msg);
         assert_eq!(e2.line, Some(2));
+    }
+
+    /// break/continue внутри do-while — те же правила, что в while:
+    /// break рельсой к выходу цикла, continue рельсой к началу итерации.
+    #[test]
+    fn dowhile_exits_behave_like_while() {
+        let src = "int main(void) { do { if (a > 5) break; if (a < 0) continue; a = a + 1; } while (a < 10); }";
+        let nodes = parse_ok(src);
+        let l = &nodes[0];
+        assert_eq!(l.loop_kind, Some(LoopKind::DoWhile));
+        let body = l.body.as_ref().unwrap();
+        // break/continue сидят внутри веток if — так же, как в while
+        let nested: Vec<&Stmt> = body
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Node(n) if n.kind == NodeKind::Decision => Some(&n.branches),
+                _ => None,
+            })
+            .flatten()
+            .flat_map(|b| b.stmts.iter())
+            .collect();
+        assert!(
+            nested.iter().any(|s| matches!(s, Stmt::Break)),
+            "break внутри ветки do-while типизирован"
+        );
+        assert!(
+            nested.iter().any(|s| matches!(s, Stmt::Continue)),
+            "continue внутри ветки do-while типизирован"
+        );
     }
 
     #[test]
@@ -1243,5 +1402,138 @@ mod tests {
             vec!["1"],
             "while (true) с подстановкой true -> 1"
         );
+    }
+
+    /// Пустое тело: main из одних return — отказ, а не схема «Start → End».
+    /// Раньше такая схема рисовалась и выглядела ошибкой движка.
+    #[test]
+    fn main_with_only_return_is_refused() {
+        let e = parse_c_to_nodes("int main(void) { return 0; }", "en").unwrap_err();
+        assert!(e.msg.contains("нет рисуемых операторов"), "{}", e.msg);
+        // и с выражениями в return — тоже: return что-то считает
+        let e2 = parse_c_to_nodes("int main(void) { return a + 1; }", "en").unwrap_err();
+        assert!(e2.msg.contains("нет рисуемых операторов"), "{}", e2.msg);
+        // объявления без инициализаторов не рисуются — тот же отказ
+        let e3 = parse_c_to_nodes("int main(void) { int a; float b; }", "en").unwrap_err();
+        assert!(e3.msg.contains("нет рисуемых операторов"), "{}", e3.msg);
+    }
+
+    /// Функция-пустышка пропускается, main с телом рисуется: пустышка не
+    /// порождает отдельный файл «Start → End».
+    #[test]
+    fn empty_helper_is_skipped_main_drawn() {
+        let src = "int add(int a, int b) { return a + b; }\nint main(void) { printf(\"%d\", 1); return 0; }";
+        let fs = c_to_gvn_functions(src, "en").unwrap();
+        assert_eq!(fs.len(), 1, "пустышка add пропущена: {:?}", fs);
+        assert_eq!(fs[0].0, "main");
+    }
+
+    /// Функция с телом из одного вложенного цикла НЕ пуста (у цикла есть
+    /// тело) — рисуется, даже если плиток в нём нет. Ловит излишне жадный
+    /// фильтр: цикл do {} while(0) остаётся на схеме.
+    #[test]
+    fn helper_with_only_loop_is_drawn() {
+        let src = "void spin(void) { while (1) { } }\nint main(void) { spin(); return 0; }";
+        let fs = c_to_gvn_functions(src, "en").unwrap();
+        let names: Vec<&str> = fs.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(
+            names.contains(&"spin"),
+            "цикл функции остаётся: {:?}",
+            names
+        );
+        assert!(names.contains(&"main"), "main на месте: {:?}", names);
+    }
+
+    /// Все функции файла — пустышки: отказ по всему файлу (не пустая пачка).
+    #[test]
+    fn file_of_empty_functions_is_refused() {
+        let src =
+            "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }";
+        let e = c_to_gvn_functions(src, "en").unwrap_err();
+        assert!(e.msg.contains("нет рисуемых операторов"), "{}", e.msg);
+    }
+
+    /// Декларация со значением — рисуемая, поэтому main с одной такой
+    /// строкой не пуст.
+    #[test]
+    fn main_with_only_initialized_declaration_draws() {
+        let nodes = parse_c_to_nodes("int main(void) { int n = 5; return 0; }", "en").unwrap();
+        assert!(
+            nodes.iter().any(|n| n.text.contains("n = 5")),
+            "{:?}",
+            nodes.iter().map(|n| &n.text).collect::<Vec<_>>()
+        );
+    }
+
+    /// Продолжение директивы: `#define X \` + следующая строка склеиваются,
+    /// продолжение не остаётся кодом (раньше парсер падал на нём).
+    #[test]
+    fn directive_continuation_is_joined() {
+        let src = "#define MAX(a, b) \\\n    ((a) > (b) ? (a) : (b))\nint main(void) { int m = MAX(1, 2); return 0; }";
+        let nodes = parse_ok(src);
+        assert!(
+            nodes.iter().any(|n| n.text.contains("m = MAX")),
+            "{:?}",
+            nodes.iter().map(|n| &n.text).collect::<Vec<_>>()
+        );
+        // нумерация строк сохраняется: продолжения уходят пустыми строками
+        let prepared = prepare(src);
+        assert_eq!(prepared.lines().count(), src.lines().count());
+    }
+
+    /// Выключенная ветка `#if 0 … #endif` вырезается целиком, включая
+    /// вложенные #if. Ветка `#else` при этом ЖИВАЯ — по правилам C
+    /// препроцессора тело else включается, когда if выключен.
+    #[test]
+    fn if0_block_is_stripped() {
+        let src = "#include <stdio.h>\nint main(void) {\n#if 0\n    printf(\"dead\");\n#if 1\n    printf(\"dead nested\");\n#endif\n#endif\n    printf(\"live\");\n    return 0;\n}";
+        let nodes = parse_ok(src);
+        let texts: Vec<&str> = nodes.iter().map(|n| n.text.as_str()).collect();
+        assert!(texts.contains(&"printf(\"live\")"), "{:?}", texts);
+        assert!(!texts.iter().any(|t| t.contains("dead")), "{:?}", texts);
+    }
+
+    /// `#if 0 … #else … #endif`: по правилам C ветка else — живой код.
+    #[test]
+    fn if0_else_branch_is_live() {
+        let src = "int main(void) {\n#if 0\n    printf(\"dead\");\n#else\n    printf(\"live else\");\n#endif\n    return 0;\n}";
+        let nodes = parse_ok(src);
+        let texts: Vec<&str> = nodes.iter().map(|n| n.text.as_str()).collect();
+        assert!(texts.contains(&"printf(\"live else\")"), "{:?}", texts);
+        assert!(!texts.iter().any(|t| t.contains("dead")), "{:?}", texts);
+    }
+
+    /// `#ifdef`/`#ifndef` считаются включёнными: заголовок студент
+    /// подключает осознанно, ветка с телом рисуется.
+    #[test]
+    fn ifdef_branch_is_kept() {
+        let src =
+            "int main(void) {\n#ifdef _DEBUG\n    printf(\"debug\");\n#endif\n    return 0;\n}";
+        let nodes = parse_ok(src);
+        assert!(
+            nodes.iter().any(|n| n.text.contains("debug")),
+            "{:?}",
+            nodes.iter().map(|n| &n.text).collect::<Vec<_>>()
+        );
+    }
+
+    /// Включённая ветка с else: первая ветка живая, вторая выключена.
+    #[test]
+    fn if1_else_picks_live_branch() {
+        let src = "int main(void) {\n#if 1\n    printf(\"first\");\n#else\n    printf(\"second\");\n#endif\n    return 0;\n}";
+        let nodes = parse_ok(src);
+        let texts: Vec<&str> = nodes.iter().map(|n| n.text.as_str()).collect();
+        assert!(texts.contains(&"printf(\"first\")"), "{:?}", texts);
+        assert!(!texts.iter().any(|t| t.contains("second")), "{:?}", texts);
+    }
+
+    /// Ошибка после вырезанного блока указывает на настоящую строку:
+    /// нумерация не съезжает из-за вырезанных строк.
+    #[test]
+    fn error_line_survives_if0_strip() {
+        // строка 2..4 — выключенный блок; строка 5 — реальная ошибка
+        let src = "int main(void) {\n#if 0\n    dead = 1;\n#endif\n    a = ;\n    return 0;\n}";
+        let e = parse_c_to_nodes(src, "en").unwrap_err();
+        assert_eq!(e.line, Some(5), "ошибка на строке 5: {:?}", e);
     }
 }

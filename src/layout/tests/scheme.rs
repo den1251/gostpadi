@@ -1462,3 +1462,34 @@ fn continue_rail_inside_nested_if_loop_misses_shapes() {
     }
     assert!(overlaps_ok(&l.shapes));
 }
+
+/// Каскад else-if, где каждая ветка кончается return: плитка «return»
+/// бывает шире колонки, и коридор каскада садился внутрь её силуэта
+/// (torture.c/classify.c: вертикаль сквозь «return -1»). Полуширина
+/// колонки теперь считает свою фигуру, коридор чист.
+#[test]
+fn cascade_with_returns_keeps_corridor_clear() {
+    let st = Style::default();
+    let text = "\
+if x < 0
+    да: return -1
+    нет:
+    if x == 0
+        да: return 0
+        нет:
+        if x < 10
+            да: return 1
+            нет: return 2
+";
+    let nodes = crate::frontend::gvn::parse(text, &st, "ru").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let l = layout(&nodes, &sizes, &st);
+    if let Err(e) = crossings_ok(&l.shapes, &l.edges) {
+        panic!("коридор каскада заходит на блок: {e}");
+    }
+    if let Err(e) = crate::layout::dangling_ok(&l) {
+        panic!("обрыв линии: {e}");
+    }
+    assert!(overlaps_ok(&l.shapes));
+    assert!(single_entry_ok(&l));
+}

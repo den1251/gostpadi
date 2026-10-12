@@ -18,29 +18,44 @@ pub(super) fn rail_only(items: &[Stmt]) -> bool {
 pub(super) fn extent(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) -> f64 {
     let mut he = colw / 2.0;
     for it in items {
-        let Stmt::Node(nd) = it else { continue };
-        let dw2 = sizes["if"].0;
-        if nd.kind == NodeKind::Decision {
-            let ne: Vec<&Branch> = nd.branches.iter().filter(|b| !b.stmts.is_empty()).collect();
-            let sub = ne
-                .iter()
-                .map(|b| extent(sizes, st, colw, &b.stmts))
-                .fold(colw / 2.0, f64::max);
-            let n = ne.len();
-            let tiers = n.saturating_sub(1) / 2;
-            let pitch2 = 2.0 * sub + st.colgap;
-            he = he
-                .max(dw2 / 2.0 + st.hgap + sub + tiers as f64 * pitch2)
-                .max(super::geometry::up(
-                    dw2 / 2.0 + 2.0 * st.grid + tiers as f64 * pitch2 + sub,
-                    st.grid,
-                ));
-        } else {
-            // цикл: две трапеции + тело
-            he = he.max(sizes["loop"].0 / 2.0);
-            if let Some(body) = &nd.body {
-                he = he.max(extent(sizes, st, colw, body) + st.mgap);
+        match it {
+            Stmt::Tile { kind, .. } => {
+                // ширина своей фигуры: ret/term бывают шире колонки —
+                // иначе коридор каскада садился внутрь силуэта плитки
+                // (classify.c: вертикаль «return -1» проходила сквозь
+                // самый блок)
+                let key = match kind {
+                    TileKind::Io => "io",
+                    TileKind::Act => "act",
+                };
+                he = he.max(sizes[key].0 / 2.0);
             }
+            Stmt::Return(_) => he = he.max(sizes["ret"].0 / 2.0),
+            Stmt::Node(nd) if nd.kind == NodeKind::Decision => {
+                let ne: Vec<&Branch> = nd.branches.iter().filter(|b| !b.stmts.is_empty()).collect();
+                let sub = ne
+                    .iter()
+                    .map(|b| extent(sizes, st, colw, &b.stmts))
+                    .fold(colw / 2.0, f64::max);
+                let n = ne.len();
+                let tiers = n.saturating_sub(1) / 2;
+                let pitch2 = 2.0 * sub + st.colgap;
+                let dw2 = sizes["if"].0;
+                he = he
+                    .max(dw2 / 2.0 + st.hgap + sub + tiers as f64 * pitch2)
+                    .max(super::geometry::up(
+                        dw2 / 2.0 + 2.0 * st.grid + tiers as f64 * pitch2 + sub,
+                        st.grid,
+                    ));
+            }
+            Stmt::Node(nd) => {
+                // цикл: две трапеции + тело
+                he = he.max(sizes["loop"].0 / 2.0);
+                if let Some(body) = &nd.body {
+                    he = he.max(extent(sizes, st, colw, body) + st.mgap);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
         }
     }
     he
