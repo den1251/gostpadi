@@ -3,11 +3,15 @@
 //! снимается сам — с сохранением нумерации строк, как в Python-версии.
 
 use crate::error::ParseError;
-use crate::frontend::tile_kind;
+use crate::frontend::{tile_kind, MARKER};
 use crate::ir::{Branch, LoopKind, Node, NodeKind, Stmt};
 use lang_c::ast::*;
 use lang_c::driver::{parse_preprocessed, Config, Flavor, SyntaxError};
 use lang_c::span::Node as LangNode;
+
+/// Во что prepare() переписывает `// перенос`: легальный вызов. В IR
+/// его узнаёт stmt() по точному тексту выражения.
+const MARKER_CALL: &str = "__gsplit__ ()";
 
 /// Код C -> узлы схемы (без Start/End, их добавляет layout).
 /// labels: "en" -> yes/no, "ru" -> да/нет.
@@ -360,6 +364,14 @@ impl<'a> Ctx<'a> {
             Statement::Compound(items) => self.items(items),
             Statement::Expression(Some(e)) => {
                 let text = expr_text(self.src, e);
+                // маркер ручного переноса: prepare() свёл `// перенос`
+                // к вызову `__gsplit__ ()`, здесь он становится узлом
+                if text == MARKER_CALL {
+                    return Ok(vec![Stmt::Node(Box::new(Node::new(
+                        NodeKind::Conn,
+                        MARKER,
+                    )))]);
+                }
                 Ok(if text.is_empty() {
                     vec![]
                 } else {
@@ -639,9 +651,12 @@ fn prepare(src: &str) -> String {
     let src = src.trim_start_matches('\u{feff}').to_string();
     // 1) склеить континуации директив (число строк сохраняется)
     let joined = join_continuations(&src).join("\n");
+    // 1.5) маркер ручного переноса — в легальный C-стейтмент на той же
+    //      позиции: strip_comments его уже не увидит, \n остаются на месте
+    let marked = rewrite_markers(&joined);
     // 2) снять комментарии — по ВСЕМУ тексту: /* */ живёт через
     //    построчно строки, и на перловой строке его не видно
-    let stripped = strip_comments(&joined);
+    let stripped = strip_comments(&marked);
     // 3) вырезать выключенные ветки и сами директивы
     let no_comments: Vec<String> = stripped.split('\n').map(str::to_string).collect();
     // стек условий препроцессора: (ветка_живая, была_ли_else)
@@ -701,6 +716,34 @@ fn prepare(src: &str) -> String {
         out.push(String::new());
     }
     out.join("\n")
+}
+
+/// `// перенос` -> `__gsplit__ ();` на той же позиции строки: маркер
+/// доезжает до AST обычным вызовом. Строк не прибавляет и не убавляет,
+/// поэтому номера строк в ошибках остаются координатами исходника.
+fn rewrite_markers(src: &str) -> String {
+    let mut out = String::with_capacity(src.len() + 16);
+    for (i, line) in src.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        match marker_comment_at(line) {
+            Some(p) => {
+                out.push_str(&line[..p]);
+                out.push_str(MARKER_CALL);
+                out.push(';');
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// Позиция комментария ровно `// перенос` в строке. Строгое равенство:
+/// «переносить», «переносы» маркером не являются.
+fn marker_comment_at(line: &str) -> Option<usize> {
+    let p = line.find("//")?;
+    (line[p + 2..].trim() == MARKER).then_some(p)
 }
 
 /// Склейка континуций: строка директивы, кончающаяся `\`, продолжается
@@ -1076,6 +1119,49 @@ mod tests {
         assert_eq!(e.line, Some(4), "строка ошибки: {:?}", e.msg);
         let out = strip_comments(src);
         assert_eq!(out.matches('\n').count(), src.matches('\n').count());
+    }
+
+    /// Маркер ручного переноса: `// перенос` становится легальным
+    /// C-стейтментом на той же строке (число строк цело); отдельный
+    /// случай — маркер в хвосте строки с кодом; «переносить» не маркер.
+    #[test]
+    fn prepare_rewrites_transfer_marker() {
+        let src = concat!(
+            "int main(void) {\n",
+            "    int a = 1; // перенос\n",
+            "    // перенос\n",
+            "    a = 2;\n",
+            "    // переносить\n",
+            "}\n",
+        );
+        let p = prepare(src);
+        assert_eq!(p.matches("__gsplit__ ();").count(), 2, "{p}");
+        assert!(
+            p.contains("    int a = 1; __gsplit__ ();"),
+            "хвостовой маркер: {p}"
+        );
+        assert!(p.contains("    __gsplit__ ();"), "маркер-строка: {p}");
+        assert_eq!(
+            p.matches('\n').count(),
+            src.matches('\n').count(),
+            "число строк обязано сохраниться: {p}"
+        );
+    }
+
+    /// Маркер доезжает по C-пути до узла схемы: conn «перенос».
+    #[test]
+    fn marker_statement_becomes_conn_node() {
+        let nodes = parse_ok("int main(void) {\n    int a = 1;\n    // перенос\n    a = 2;\n}");
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.kind == NodeKind::Conn && n.text == MARKER),
+            "{nodes:?}"
+        );
+        assert_eq!(
+            texts(&nodes, NodeKind::Act),
+            vec!["a = 1".to_string(), "a = 2".to_string()]
+        );
     }
 
     #[test]
