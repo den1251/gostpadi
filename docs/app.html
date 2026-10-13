@@ -282,29 +282,33 @@
   /* position:fixed ломается внутри трансформированного предка, поэтому
      лайтбокс живёт прямо в body и перекрывает страницу слоем */
   #lightbox{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
-    background:var(--bg)}
+    background:var(--bg);animation:lb-in .14s ease-out}
   #lightbox[hidden]{display:none}
+  @keyframes lb-in{from{opacity:.3}}
   .lbbar{flex:none;display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;
     border-bottom:1px solid var(--line);background:var(--bg)}
   .lbtitle{font-size:14px;color:var(--fg2);max-width:40vw;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
   #lbval{min-width:42px;text-align:center;font-size:12px;color:var(--muted)}
-  #lbview{flex:1;min-height:0;position:relative;overflow:hidden;cursor:grab;
+  #lbview{flex:1;min-height:0;position:relative;overflow:hidden;cursor:grab;touch-action:none;
     background:
       linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%),
       linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%);
     background-size:22px 22px;background-position:0 0,11px 11px}
-  #lbstage{position:absolute;transform-origin:0 0}
+  #lbstage{position:absolute;transform-origin:0 0;transition:transform .16s ease}
+  /* во время жеста (палец, колесо) переход гасим — иначе плывёт */
+  #lbstage.lb-live{transition:none}
   #lbpager{flex:none;display:flex;align-items:center;justify-content:center;gap:1rem;
     padding:.7rem 0 1.1rem}
   #lbpager[hidden]{display:none}
-  #lbdots{display:flex;gap:7px;background:rgba(16,18,24,.82);border:1px solid var(--line);
-    border-radius:999px;padding:7px 11px}
-  #lbdots i{width:8px;height:8px;border-radius:50%;cursor:pointer;
-    background:rgba(255,255,255,.45);border:0;padding:0;display:block}
-  #lbdots i:hover{background:rgba(255,255,255,.75)}
-  #lbdots i[aria-current="true"]{background:var(--accent);width:18px;border-radius:4px}
-  #lbdots i:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  #lbthumbs{display:flex;gap:6px;align-items:center;background:rgba(16,18,24,.82);border:1px solid var(--line);
+    border-radius:999px;padding:7px 11px;max-width:min(62vw,560px);overflow-x:auto;scrollbar-width:none}
+  #lbthumbs::-webkit-scrollbar{display:none}
+  .lbthumb{height:46px;flex:none;background:var(--paper);border:1px solid var(--paper-line);
+    border-radius:3px;overflow:hidden;cursor:pointer;opacity:.72}
+  .lbthumb svg{width:100%;height:100%;display:block}
+  .lbthumb:hover{opacity:1}
+  .lbthumb[aria-current="true"]{outline:2px solid var(--accent);outline-offset:1px;opacity:1}
   #lbpager button{width:34px;height:34px;border-radius:50%;
     border:1px solid var(--paper-line);background:rgba(20,22,28,.62);color:var(--fg);
     font-size:18px;line-height:1;cursor:pointer}
@@ -521,7 +525,7 @@
 <div id="lbview"><div id="lbstage"></div></div>
 <div id="lbpager" hidden>
   <button id="lbprev" aria-label="предыдущий лист">‹</button>
-  <span id="lbdots" role="tablist" aria-label="листы"></span>
+  <span id="lbthumbs" role="tablist" aria-label="листы"></span>
   <button id="lbnext" aria-label="следующий лист">›</button>
 </div>
 </div>
@@ -1120,10 +1124,15 @@ function lbApply() {
   if (!s) return;
   if (!isFinite(lbZoom) || lbZoom <= 0) lbZoom = lbFit() ?? 1;
   const z = lbZoom;
-  if (lbZoom === null || lbPan === null) {
-    const { w, h } = lbSize();
+  const { w, h } = lbSize();
+  if (lbPan === null) {
     lbPan = { x: Math.max(8, (w - s.w * z) / 2 + 8), y: Math.max(8, (h - s.h * z) / 2 + 8) };
   }
+  // ось, где схема уже вьюпорта, заперта по центру; где шире — свобода,
+  // но не дальше 8px от края: лист нельзя потерять при панорамировании
+  const cw = s.w * z, ch = s.h * z;
+  lbPan.x = cw <= w - 16 ? (w - cw) / 2 + 8 : Math.min(w - 8, Math.max(8 - cw, lbPan.x));
+  lbPan.y = ch <= h - 16 ? (h - ch) / 2 + 8 : Math.min(h - 8, Math.max(8 - ch, lbPan.y));
   stage.style.transform = `translate(${lbPan.x}px, ${lbPan.y}px) scale(${z})`;
   $("lbval").textContent = Math.round(z * 100) + "%";
 }
@@ -1151,16 +1160,21 @@ function lbDraw() {
     const at = own.indexOf(s);
     $("lbprev").disabled = at <= 0;
     $("lbnext").disabled = at >= own.length - 1;
-    const dots = $("lbdots");
-    dots.innerHTML = "";
+    // плёнка миниатюр вместо точек: видно, какой лист какой, прыжок в один клик
+    const thumbs = $("lbthumbs");
+    thumbs.innerHTML = "";
     own.forEach((x, i) => {
-      const b = document.createElement("i");
-      b.title = x.name;
-      b.setAttribute("role", "tab");
-      b.setAttribute("aria-current", i === at ? "true" : "false");
-      b.addEventListener("click", () => { openSheet(i); lbDraw(); });
-      dots.appendChild(b);
+      const d = document.createElement("div");
+      d.className = "lbthumb";
+      d.style.width = Math.round(Math.max(26, Math.min(76, 46 * (x.w / x.h)))) + "px";
+      d.title = x.name;
+      d.setAttribute("role", "tab");
+      d.setAttribute("aria-current", i === at ? "true" : "false");
+      d.innerHTML = x.svg;
+      d.addEventListener("click", () => { openSheet(i); lbDraw(); });
+      thumbs.appendChild(d);
     });
+    thumbs.children[at]?.scrollIntoView({ block: "nearest", inline: "center" });
   }
   lbZoom = null;
   lbPan = null;
@@ -1184,30 +1198,116 @@ $("lbnext").addEventListener("click", () => lbStep(1));
 $("zoomcard").addEventListener("click", () => openLightbox());
 addEventListener("resize", () => { if (lbOpen) { lbZoom = null; lbPan = null; lbApply(); } });
 
-// колесо — масштаб, перетаскивание — сдвиг
+/* Жесты лайтбокса: колесо — масштаб вокруг курсора, палец/мышь — сдвиг,
+   щипок — масштаб вокруг середины пальцев, свайп на «вмещается» —
+   соседний лист, двойной клик — «вместить ↔ крупно». Во время жеста
+   анимация гасится (класс .lb-live), иначе переход плавает за пальцем. */
+let lbLiveT = 0;
+function lbLive() {
+  const st = $("lbstage");
+  st.classList.add("lb-live");
+  clearTimeout(lbLiveT);
+  lbLiveT = setTimeout(() => st.classList.remove("lb-live"), 260);
+}
+
 $("lbview").addEventListener("wheel", e => {
   if (!lbOpen) return;
   e.preventDefault();
-  const z = (lbZoom ?? lbFit() ?? 1) * (e.deltaY < 0 ? 1.12 : 1 / 1.12);
-  lbZoom = Math.max(0.05, Math.min(6, z));
-  lbPan = null;
+  lbLive();
+  const z0 = lbZoom ?? lbFit() ?? 1;
+  const z = Math.max(0.05, Math.min(6, z0 * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  const k = z / z0;
+  if (!lbPan) lbApply();
+  const v = $("lbview").getBoundingClientRect();
+  // точка под курсором остаётся под курсором: pan' = m − (m − pan)·k
+  const mx = e.clientX - v.left, my = e.clientY - v.top;
+  lbPan = { x: mx - (mx - lbPan.x) * k, y: my - (my - lbPan.y) * k };
+  lbZoom = z;
   lbApply();
 }, { passive: false });
 
-let lbDrag = null;
+let lbPts = new Map(), lbDrag = null, lbPinch = null, lbLastMove = 0;
 $("lbview").addEventListener("pointerdown", e => {
   if (!lbOpen || e.target.closest("button")) return;
-  lbDrag = { x: e.clientX, y: e.clientY, px: lbPan.x, py: lbPan.y };
-  $("lbview").setPointerCapture(e.pointerId);
+  try { $("lbview").setPointerCapture(e.pointerId); } catch { /* указатель уже отжат */ }
+  lbPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (lbPts.size === 1) {
+    lbLive();
+    lbDrag = { x: e.clientX, y: e.clientY, px: lbPan.x, py: lbPan.y, moved: 0 };
+  } else if (lbPts.size === 2) {
+    lbDrag = null;
+    lbLive();
+    if (!lbPan) lbApply();
+    const [a, b] = [...lbPts.values()];
+    lbPinch = {
+      d: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+      z: lbZoom, pan: { ...lbPan },
+    };
+  }
 });
 $("lbview").addEventListener("pointermove", e => {
-  if (!lbDrag) return;
-  lbPan = { x: lbDrag.px + (e.clientX - lbDrag.x), y: lbDrag.py + (e.clientY - lbDrag.y) };
-  lbApply();
+  const p = lbPts.get(e.pointerId);
+  if (p) { p.x = e.clientX; p.y = e.clientY; }
+  if (lbPinch && lbPts.size >= 2) {
+    lbLive();
+    const [a, b] = [...lbPts.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const k = Math.max(0.05 / lbPinch.z, Math.min(6 / lbPinch.z, d / lbPinch.d));
+    lbZoom = lbPinch.z * k;
+    // середина щипка остаётся под пальцами
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    lbPan = { x: mx - (lbPinch.mx - lbPinch.pan.x) * k, y: my - (lbPinch.my - lbPinch.pan.y) * k };
+    lbApply();
+  } else if (lbDrag && p) {
+    const dx = e.clientX - lbDrag.x, dy = e.clientY - lbDrag.y;
+    lbDrag.moved = Math.max(lbDrag.moved, Math.abs(dx) + Math.abs(dy));
+    lbLive();
+    lbPan = { x: lbDrag.px + dx, y: lbDrag.py + dy };
+    lbApply();
+  }
 });
-const lbDragEnd = () => { lbDrag = null; };
+const lbDragEnd = e => {
+  lbPts.delete(e.pointerId);
+  if (lbPts.size === 1) {
+    // из щипка в драг одним пальцем: якорь — оставшийся палец
+    lbPinch = null;
+    const [p] = [...lbPts.values()];
+    lbDrag = { x: p.x, y: p.y, px: lbPan.x, py: lbPan.y, moved: Infinity };
+    return;
+  }
+  if (lbDrag && !lbPts.size) {
+    lbLastMove = lbDrag.moved;
+    const dx = e.clientX - lbDrag.x, dy = e.clientY - lbDrag.y;
+    const fit = lbFit() ?? 1;
+    // свайп работает только на «вмещается»; щипок (moved: Infinity)
+    // свайпом не считается. Влево — следующий лист.
+    if (lbDrag.moved !== Infinity
+      && Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)
+      && (lbZoom ?? fit) <= fit * 1.02) {
+      lbStep(dx < 0 ? 1 : -1);
+    }
+  }
+  lbPinch = null;
+  lbDrag = null;
+};
 $("lbview").addEventListener("pointerup", lbDragEnd);
 $("lbview").addEventListener("pointercancel", lbDragEnd);
+
+// двойной клик: «вместить ↔ крупно», якорь — точка под курсором
+$("lbview").addEventListener("dblclick", e => {
+  if (!lbOpen || lbLastMove > 8) return;
+  const fit = lbFit() ?? 1;
+  if ((lbZoom ?? fit) > fit * 1.01) { lbZoom = null; lbPan = null; lbApply(); return; }
+  lbLive();
+  const z0 = lbZoom ?? fit, z = Math.min(6, fit * 2), k = z / z0;
+  if (!lbPan) lbApply();
+  const v = $("lbview").getBoundingClientRect();
+  const mx = e.clientX - v.left, my = e.clientY - v.top;
+  lbPan = { x: mx - (mx - lbPan.x) * k, y: my - (my - lbPan.y) * k };
+  lbZoom = z;
+  lbApply();
+});
 
 // dblclick по схеме в панели — тоже полный просмотр
 $("viewport").addEventListener("dblclick", e => {
