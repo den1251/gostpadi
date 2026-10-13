@@ -168,15 +168,21 @@ fn strip_stmts(stmts: &mut Vec<Stmt>) {
 
 /// Тело цикла -> псевдо-узлы верхнего уровня + карта обратно в Stmt.
 /// Break/Continue в колонке нулевой высоты: в верхнеуровневом замере они
-/// врали бы, поэтому пропущены, а карта помнит их места в теле.
+/// врали бы, поэтому пропущены, а карта помнит их места в теле. Рельс
+/// обрывает колонку: всё за ним мёртво (column.rs выходит на ColEnd::Rail),
+/// так что в замер оно не попадает и резать по нему нечего.
 fn pseudo_nodes(body: &[Stmt]) -> (Vec<Node>, Vec<usize>) {
     let mut nodes = Vec::new();
     let mut map = Vec::new();
     for (i, st) in body.iter().enumerate() {
+        if is_rail(st) {
+            break;
+        }
         let nd = match st {
             Stmt::Tile { kind, text } => Node::new(NodeKind::from(*kind), text.clone()),
             Stmt::Return(t) => Node::new(NodeKind::Return, t.clone()),
             Stmt::Node(nd) => (**nd).clone(),
+            // недостижимо: рельсы отсечены выше, но match полон
             Stmt::Break | Stmt::Continue => continue,
         };
         nodes.push(nd);
@@ -285,14 +291,10 @@ fn split_loop_body(
             continue;
         };
         let m = map[j];
-        // рельс обрывает колонку: кусок кончается им, но не начинается —
-        // иначе лист открывался бы рельсом из пустоты, а операторы за
-        // рельсом не попали бы ни на один лист
-        let mut cut = body[..m].iter().position(is_rail).map_or(m, |r| r + 1);
-        while cut + 1 < body.len() && is_rail(&body[cut]) {
-            cut += 1;
-        }
-        splice_loop(items, i, body[..cut].to_vec(), body[cut..].to_vec());
+        // рельс и мёртвый хвост за ним остаются в заднем куске: псевдо-замер
+        // их не видел, значит рез всегда до рельсы — кусок не начинается
+        // рельсом из пустоты, а мёртвый код не попадает на лист живым
+        splice_loop(items, i, body[..m].to_vec(), body[m..].to_vec());
         return true;
     }
     false

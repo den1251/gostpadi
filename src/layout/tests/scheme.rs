@@ -1786,3 +1786,52 @@ while i < 5
         assert!(dangling_ok(l).is_ok());
     }
 }
+
+/// Мёртвый хвост тела после первой рельсы не воскресает на листах: колонка
+/// обрывается на break, псевдо-замер мёртвых не видит — иначе рез уходил за
+/// рельсу и «МЁРТВ» рисовался живой плиткой на следующем листе.
+#[test]
+fn dead_candidates_after_rail_not_drawn() {
+    let st = Style::default();
+    let mut text = String::from("while i < 24\n");
+    for k in 1..=5 {
+        text.push_str(&format!("    s = s + {k}\n"));
+    }
+    text.push_str("    break\n");
+    for k in 1..=10 {
+        text.push_str(&format!("    МЁРТВ{k} = 1\n"));
+    }
+    // переросток ниже цикла: без него тело вообще не режется
+    for k in 1..=30 {
+        text.push_str(&format!("z = z + {k}\n"));
+    }
+    let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert!(parts.len() >= 2, "частей мало: {}", parts.len());
+    for (k, part) in parts.iter().enumerate() {
+        let l = layout(part, &sizes, &st);
+        assert!(
+            !l.shapes
+                .iter()
+                .any(|sh| sh.lines.iter().any(|t| t.contains("МЁРТВ"))),
+            "лист {k} воскресил мёртвый код: {:?}",
+            l.shapes
+                .iter()
+                .map(|sh| sh.lines.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
+        assert!(dangling_ok(&l).is_ok(), "лист {k}");
+    }
+    // живая часть (до рельсы) нарисована целиком — как в обычном раскладе
+    let drawn: Vec<String> = parts
+        .iter()
+        .flat_map(|p| layout(p, &sizes, &st).shapes)
+        .flat_map(|sh| sh.lines)
+        .collect();
+    for k in 1..=5 {
+        let t = format!("s = s + {k}");
+        assert!(drawn.contains(&t), "живой оператор {t} потерян: {drawn:?}");
+    }
+}
