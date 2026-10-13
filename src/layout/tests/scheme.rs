@@ -394,6 +394,48 @@ fn branch_marker_is_silent() {
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
 }
 
+/// Маркер ручного переноса ломает страницу, даже если всё влезло:
+/// маркер-узел съеден, части связаны кружками одной буквы.
+#[test]
+fn top_level_marker_forces_page_break() {
+    let st = Style::default();
+    let nodes = crate::frontend::gvn::parse("a = 1\nперенос\nb = 2\n", &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    assert!(
+        !parts
+            .iter()
+            .flatten()
+            .any(|n| n.text == crate::frontend::MARKER),
+        "маркер-узлы обязаны быть съедены"
+    );
+    let out = parts[0].last().unwrap();
+    let inp = parts[1].first().unwrap();
+    assert_eq!(out.kind, NodeKind::Conn, "{out:?}");
+    assert_eq!(out.text, inp.text, "одна буква на пару листов");
+    for part in &parts {
+        let l = layout(part, &sizes, &st);
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+        assert!(single_entry_ok(&l));
+    }
+}
+
+/// Маркер последним перед «концом»: разрезать нечего — лишнего листа
+/// и сиротского кружка не появляется.
+#[test]
+fn marker_at_end_no_orphan_page() {
+    let st = Style::default();
+    let nodes = crate::frontend::gvn::parse("a = 1\nb = 2\nперенос\n", &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert_eq!(parts.len(), 1, "{parts:?}");
+    assert!(
+        !parts[0].iter().any(|n| n.kind == NodeKind::Conn),
+        "ни маркера, ни кружка: {parts:?}"
+    );
+}
+
 #[test]
 fn orthogonal_edges() {
     let mut d = node(NodeKind::Decision, "if a > 0");

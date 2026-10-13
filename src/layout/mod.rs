@@ -14,7 +14,7 @@ mod types;
 
 pub use geometry::{crossings_ok, dangling_ok, overlaps_ok, single_entry_ok};
 pub use measure::{measure, normalize, uniform_sizes};
-pub use split::split_scheme;
+pub use split::{split_scheme, strip_markers};
 pub use types::{Anchor, Edge, Label, Layout, Shape, Sizes};
 
 use ctx::Ctx;

@@ -421,4 +421,17 @@ mod tests {
             "одна схема — один diagram"
         );
     }
+
+    /// Маркер ручного переноса `// перенос` до SVG не доезжает: на
+    /// страницах — кружки-соединители, слова «перенос» нет.
+    #[test]
+    fn marker_never_reaches_pages() {
+        let src = "int main(void) {\n    int a = 1;\n    // перенос\n    int b = 2;\n}";
+        let pages = render_text(src, true, &opts()).unwrap();
+        assert_eq!(pages.len(), 2, "маркер ломает страницу");
+        for p in &pages {
+            assert!(!p.contains("перенос"), "маркер попал в SVG");
+            assert!(p.contains("<circle"), "нет кружка-соединителя");
+        }
+    }
 }
