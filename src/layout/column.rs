@@ -77,6 +77,9 @@ impl Ctx<'_> {
                 Some(pb) => pb + self.st.vgap,
             };
             match it {
+                // маркер ручного переноса внутри ветки: страниц внутри
+                // колонки нет, узел глотается молча (раньше падал в sub_loop)
+                Stmt::Node(nd) if nd.kind == NodeKind::Conn => {}
                 Stmt::Node(nd) => {
                     if let Some(pb) = prev_bottom {
                         self.edge(&[(tx, pb), (tx, top)], true);

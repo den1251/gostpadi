@@ -52,6 +52,11 @@ fn sbrk() -> Stmt {
     Stmt::Break
 }
 
+/// Маркер ручного переноса листа (текст — `frontend::MARKER`).
+fn smark() -> Stmt {
+    Stmt::Node(Box::new(node(NodeKind::Conn, crate::frontend::MARKER)))
+}
+
 fn lay(nodes: &[Node]) -> Layout {
     let st = Style::default();
     let sizes = normalize(nodes, &st);

@@ -372,6 +372,28 @@ fn split_scheme_single_part_for_short_scheme() {
     assert_eq!(parts[0].len(), 4);
 }
 
+/// Маркер ручного переноса внутри ветки — не фигура: колонка глотает
+/// его молча (страниц внутри колонки нет), раскладка не падает.
+#[test]
+fn branch_marker_is_silent() {
+    let mut d = node(NodeKind::Decision, "if a > 0");
+    d.branches = vec![
+        br("да", vec![smark(), s("a = 1")], false),
+        br("нет", vec![s("b = 2")], false),
+    ];
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        d,
+        node(NodeKind::Term, "конец"),
+    ];
+    let l = lay(&nodes);
+    assert!(
+        !l.shapes.iter().any(|sh| sh.kind == "conn"),
+        "маркер не должен рисоваться кружком"
+    );
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+}
+
 #[test]
 fn orthogonal_edges() {
     let mut d = node(NodeKind::Decision, "if a > 0");
