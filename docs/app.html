@@ -448,6 +448,10 @@
         <input type="range" id="lw" min="0.5" max="3" step="0.25" value="1" style="width:90px">
         <span id="lw-val">1</span>
       </label>
+      <label>текст
+        <input type="range" id="font" min="8" max="24" step="1" value="12" style="width:90px">
+        <span id="font-val">12</span>
+      </label>
       <button class="btn tools ex" data-ex="c">пример .c</button>
     </div>
     <div class="editor-actions">
@@ -651,10 +655,10 @@ function packInputs(items) {
   return all;
 }
 
-function callBatch(items, ru, lw) {
+function callBatch(items, ru, lw, font) {
   const [ip, il] = wasmInput(packInputs(items));
   const lp = wasm.gostpadi_alloc(4);
-  const r = readOut(wasm.gostpadi_render_batch(ip, il, ru ? 1 : 0, lw, 0, lp), lp);
+  const r = readOut(wasm.gostpadi_render_batch(ip, il, ru ? 1 : 0, lw, font, lp), lp);
   wasm.gostpadi_free(ip, il);
   wasm.gostpadi_free(lp, 4);
   if (r) wasm.gostpadi_free(r.out, r.n);
@@ -665,14 +669,14 @@ function callBatch(items, ru, lw) {
    миллиметрах, 2 — draw.io. Отдельный вызов, а не поле в render_batch:
    эти файлы нужны по кнопке, а на каждый чих перерисовки в JSON они
    бы только раздували ответ втрое. */
-function callExport(items, ru, lw, mode) {
+function callExport(items, ru, lw, font, mode) {
   if (!wasm || !wasm.gostpadi_export_batch) {
     toast("движок без экспорта — обнови страницу");
     return null;
   }
   const [ip, il] = wasmInput(packInputs(items));
   const lp = wasm.gostpadi_alloc(4);
-  const r = readOut(wasm.gostpadi_export_batch(ip, il, ru ? 1 : 0, lw, 0, mode, lp), lp);
+  const r = readOut(wasm.gostpadi_export_batch(ip, il, ru ? 1 : 0, lw, font, mode, lp), lp);
   wasm.gostpadi_free(ip, il);
   wasm.gostpadi_free(lp, 4);
   if (r) wasm.gostpadi_free(r.out, r.n);
@@ -725,13 +729,14 @@ function renderNow() {
   badNames = new Set();
   requestAnimationFrame(() => {
     const t0 = performance.now();
-    const ru = $("ru").checked, lw = parseFloat($("lw").value);
+    const ru = $("ru").checked, lw = parseFloat($("lw").value),
+          font = parseFloat($("font").value);
     let res;
     try {
       // всегда пакетом, даже для одного файла: пакетный путь рисует
       // ВСЕ функции файла, а одиночный только main. Два пути давали
       // разный результат на одном и том же коде.
-      res = callBatch(items, ru, lw);
+      res = callBatch(items, ru, lw, font);
     } catch (e) {
       $("render").disabled = false;
       // старую схему сносим: под красной ошибкой оставалась схема
@@ -1411,7 +1416,7 @@ function withBusy(btn, label, fn) {
 $("dsvg").addEventListener("click", () => withBusy($("dsvg"), "…", () => {
   const s = sheets[activeSheet];
   if (!s) return;
-  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, 1);
+  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, +$("font").value, 1);
   const f = pickExport(r, s);
   if (!f) return toast("движок не отдал файл");
   saveSvg(f.sheets[0], exportStem(s));
@@ -1419,7 +1424,7 @@ $("dsvg").addEventListener("click", () => withBusy($("dsvg"), "…", () => {
 $("dpng").addEventListener("click", () => withBusy($("dpng"), "…", () => {
   const s = sheets[activeSheet];
   if (!s) return;
-  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, 1);
+  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, +$("font").value, 1);
   const f = r && r.ok && r.files[0];
   if (!f) return toast("движок не отдал файл");
   downloadPng(f.sheets[0], exportStem(s));
@@ -1427,14 +1432,14 @@ $("dpng").addEventListener("click", () => withBusy($("dpng"), "…", () => {
 $("ddrawio").addEventListener("click", () => withBusy($("ddrawio"), "…", () => {
   const s = sheets[activeSheet];
   if (!s) return;
-  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, 2);
+  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, +$("font").value, 2);
   const f = pickExport(r, s);
   if (!f) return toast("движок не отдал файл");
   save(new Blob([f.sheets[0]], { type: "application/xml" }), exportStem(s) + ".drawio");
 }));
 $("dall").addEventListener("click", () => {
   const items = curItems().filter(it => it.text.trim());
-  const r = callExport(items, $("ru").checked, +$("lw").value, 1);
+  const r = callExport(items, $("ru").checked, +$("lw").value, +$("font").value, 1);
   if (!r || !r.ok) return toast("движок не отдал файлы");
   // браузер умеет качать несколько файлов разом, но глотает пачку —
   // поэтому по одному через таймер
@@ -1443,7 +1448,7 @@ $("dall").addEventListener("click", () => {
 $("copy").addEventListener("click", () => {
   const s = sheets[activeSheet];
   if (!s) return;
-  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, 1);
+  const r = callExport(curItems().filter(it => it.text.trim()), $("ru").checked, +$("lw").value, +$("font").value, 1);
   const f = pickExport(r, s);
   if (!f) return toast("движок не отдал файл");
   navigator.clipboard.writeText(f.sheets[0]).then(() => {
@@ -1773,6 +1778,8 @@ $("ru").addEventListener("change", () => {
 });
 $("lw").addEventListener("input", () => { $("lw-val").textContent = $("lw").value.replace(".", ","); });
 $("lw").addEventListener("change", () => { store.set("gostpadi.lw", $("lw").value); renderNow(); });
+$("font").addEventListener("input", () => { $("font-val").textContent = $("font").value; });
+$("font").addEventListener("change", () => { store.set("gostpadi.font", $("font").value); renderNow(); });
 
 $("code").addEventListener("input", () => {
   if (cur < 0) {
@@ -1913,6 +1920,8 @@ const EXAMPLES = { c: EXAMPLE_C };
   $("ru").checked = store.get("gostpadi.ru") !== "0";
   if (store.get("gostpadi.lw")) $("lw").value = store.get("gostpadi.lw");
   $("lw-val").textContent = $("lw").value.replace(".", ",");
+  if (store.get("gostpadi.font")) $("font").value = store.get("gostpadi.font");
+  $("font-val").textContent = $("font").value;
   updateMode();
   drawFileList();
   if (matchMedia("(max-width: 1080px)").matches) switchTab("edit");
