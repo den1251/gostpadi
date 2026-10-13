@@ -7,7 +7,9 @@ use crate::frontend::c::c_to_gvn_functions;
 use crate::frontend::gvn::parse;
 use crate::generate::{fit_scale, render_svg_at, render_svg_tight};
 use crate::ir::Node;
-use crate::layout::{layout, normalize, split_scheme, uniform_sizes, Edge, Label, Layout, Sizes};
+use crate::layout::{
+    layout, normalize, split_scheme, strip_markers, uniform_sizes, Edge, Label, Layout, Sizes,
+};
 use crate::style::Style;
 
 pub struct Options {
@@ -86,8 +88,10 @@ fn export_layouts(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String,
     let sizes = uniform_sizes(&normed);
     schemes
         .into_iter()
-        .map(|(path, nodes)| {
-            // порезка не нужна: страниц нет, схема одна
+        .map(|(path, mut nodes)| {
+            // порезка не нужна: страниц нет, схема одна. Маркеры ручного
+            // переноса — тоже: кружок-соединитель на одном листе сирота
+            strip_markers(&mut nodes);
             let st = Style {
                 no_split: true,
                 ..st.clone()
@@ -190,8 +194,10 @@ pub fn render_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(Strin
     let sizes = uniform_sizes(&normed);
     let laid: Vec<(String, Vec<Layout>)> = schemes
         .into_iter()
-        .map(|(path, nodes)| {
+        .map(|(path, mut nodes)| {
             let pages = if st.no_split {
+                // без порезки маркер ручного переноса рисовать нечем: лист один
+                strip_markers(&mut nodes);
                 vec![layout(&nodes, &sizes, st)]
             } else {
                 split_scheme(nodes, &sizes, st)
@@ -433,5 +439,22 @@ mod tests {
             assert!(!p.contains("перенос"), "маркер попал в SVG");
             assert!(p.contains("<circle"), "нет кружка-соединителя");
         }
+    }
+
+    /// no_split: маркер съедается — одна страница, ни одного кружка
+    /// (--trim/--drawio идут тем же стрипом).
+    #[test]
+    fn no_split_swallows_markers() {
+        let src = "int main(void) {\n    int a = 1;\n    // перенос\n    int b = 2;\n}";
+        let mut o = opts();
+        o.no_split = true;
+        let pages = render_text(src, true, &o).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(!pages[0].contains("перенос"), "маркер попал в SVG");
+        assert!(!pages[0].contains("<circle"), "сиротский кружок-маркер");
+        // экспорт отчёта — тот же стрип
+        let schemes = parse_batch(&[("a.c".into(), src.into(), true)], &opts()).unwrap();
+        let xml = &render_drawio_batch(schemes, &opts().style())[0].1;
+        assert!(!xml.contains("перенос"), "маркер попал в draw.io");
     }
 }
