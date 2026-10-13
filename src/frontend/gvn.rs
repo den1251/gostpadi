@@ -1,5 +1,5 @@
 use crate::error::ParseError;
-use crate::frontend::tile_kind;
+use crate::frontend::{tile_kind, MARKER};
 use crate::ir::{Branch, LoopKind, Node, NodeKind, Stmt};
 use crate::style::Style;
 
@@ -7,6 +7,10 @@ use crate::style::Style;
 /// текст ещё сниффится на выходы и ввод-вывод: дальше IR типизирован.
 fn stmt_from_line(s: String) -> Stmt {
     let kw = s.trim();
+    // «перенос» — зарезервированное слово: маркер ручного разрыва листа
+    if kw == MARKER {
+        return Stmt::Node(Box::new(Node::new(NodeKind::Conn, MARKER)));
+    }
     if kw == "break" {
         return Stmt::Break;
     }
@@ -594,6 +598,11 @@ pub fn parse(text: &str, style: &Style, labels: &str) -> Result<Vec<Node>, Parse
         if handled {
             continue;
         }
+        // «перенос» — зарезервированное слово: маркер ручного разрыва листа
+        if stripped == MARKER {
+            nodes.push(Node::new(NodeKind::Conn, MARKER));
+            continue;
+        }
         if style.is_io(&stripped) {
             nodes.push(Node::new(NodeKind::Io, wrap(&stripped, style.max_chars)));
         } else {
@@ -795,6 +804,31 @@ mod tests {
             .unwrap();
         let labels: Vec<&str> = sw.branches.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(labels, vec!["x = caseless", "x = CASE 7", "x = 8"]);
+    }
+
+    /// Строка «перенос» на верхнем уровне — маркер ручного разрыва листа.
+    #[test]
+    fn transfer_marker_at_top() {
+        let st = Style::default();
+        let nodes = parse("a = 1\nперенос\nb = 2\n", &st, "en").unwrap();
+        assert!(
+            nodes.iter().any(|n| n.kind == NodeKind::Conn && n.text == MARKER),
+            "{nodes:?}"
+        );
+    }
+
+    /// …и внутри тела цикла: маркер доезжает туда же — conn-узлом.
+    #[test]
+    fn transfer_marker_inside_loop_body() {
+        let st = Style::default();
+        let nodes = parse("while i < 5\n    a = 1\n    перенос\n    b = 2\n", &st, "en").unwrap();
+        let lp = nodes.iter().find(|n| n.kind == NodeKind::Loop).unwrap();
+        let body = lp.body.as_ref().unwrap();
+        assert!(
+            body.iter()
+                .any(|s| matches!(s, Stmt::Node(n) if n.kind == NodeKind::Conn && n.text == MARKER)),
+            "{body:?}"
+        );
     }
 
     #[test]
