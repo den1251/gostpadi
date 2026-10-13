@@ -2,6 +2,7 @@
 
 use crate::frontend::MARKER;
 use crate::ir::{Node, NodeKind, Stmt};
+use crate::layout::measure::{no_sentinel, HEAD, MID, TAIL};
 use crate::layout::{layout, Layout, Sizes};
 use crate::style::Style;
 
@@ -16,7 +17,8 @@ fn is_marker_stmt(s: &Stmt) -> bool {
 
 /// Отрезать точку реза можно только перед простым блоком, «если» или
 /// циклом: последняя валидная ≤ limit. Якорь ПРЕДЫДУЩЕГО узла: лист
-/// доливается до последнего, что влез.
+/// доливается до последнего, что влез. j ∈ 2..stop — и до, и после
+/// реза остаётся хотя бы пара узлов (лист не начинается огрызком).
 fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize) -> Option<usize> {
     let mut cut = None;
     for j in 2..stop {
@@ -70,19 +72,24 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         let res = layout(&items, sizes, st);
         let fits = res.bounds.3 <= budget;
         let marker = items.iter().position(is_marker);
-        // короткий остаток без маркера резать нечем: лист доливается
-        if marker.is_none() && (fits || items.len() < 6) {
+        if fits && marker.is_none() {
             parts.push(items);
             break;
         }
-        let cut = if fits || items.len() < 6 {
+        let cut = if fits {
             marker // влезло, но маркер требует разрыв: режем ровно по нему
         } else {
             // маркер — потолок автореза: кусок не должен унести его с собой
-            let stop = marker.unwrap_or(items.len()).min(items.len() - 2);
+            let stop = marker
+                .unwrap_or(items.len())
+                .min(items.len().saturating_sub(1));
             auto_cut(&res, &items, limit, stop).or(marker)
         };
         let Some(cut) = cut else {
+            // верхний уровень резать нечем: пробуем разрезать тело цикла
+            if split_loop_body(&mut items, sizes, st, &res, limit) {
+                continue;
+            }
             parts.push(items);
             break;
         };
@@ -128,6 +135,99 @@ fn strip_stmts(stmts: &mut Vec<Stmt>) {
             strip_children(nd);
         }
     }
+}
+
+/// Тело цикла -> псевдо-узлы верхнего уровня + карта обратно в Stmt.
+/// Break/Continue в колонке нулевой высоты: в верхнеуровневом замере они
+/// врали бы, поэтому пропущены, а карта помнит их места в теле.
+fn pseudo_nodes(body: &[Stmt]) -> (Vec<Node>, Vec<usize>) {
+    let mut nodes = Vec::new();
+    let mut map = Vec::new();
+    for (i, st) in body.iter().enumerate() {
+        let nd = match st {
+            Stmt::Tile { kind, text } => Node::new(NodeKind::from(*kind), text.clone()),
+            Stmt::Return(t) => Node::new(NodeKind::Return, t.clone()),
+            Stmt::Node(nd) => (**nd).clone(),
+            Stmt::Break | Stmt::Continue => continue,
+        };
+        nodes.push(nd);
+        map.push(i);
+    }
+    (nodes, map)
+}
+
+/// Рельс (break/continue) обрывает колонку: поток после него уходит.
+fn is_rail(s: &Stmt) -> bool {
+    matches!(s, Stmt::Break | Stmt::Continue)
+}
+
+/// items[i] — цикл; тело режется по m: первый кусок остаётся на месте,
+/// второй встаёт за ним. Сентинел первого куска — режим исходного узла
+/// (голова уже начата — второй кусок середина), второго — хвост/середина.
+fn splice_loop(items: &mut Vec<Node>, i: usize, head: Vec<Stmt>, tail: Vec<Stmt>) {
+    let nd = &items[i];
+    let label = no_sentinel(&nd.loop_label()).to_string();
+    let (first, second) = match nd.text.chars().next() {
+        Some(HEAD) => (HEAD, MID),
+        Some(MID) => (MID, MID),
+        Some(TAIL) => (MID, TAIL),
+        _ => (HEAD, TAIL),
+    };
+    let mut h = Node::new(
+        NodeKind::Loop,
+        if first == HEAD {
+            format!("{HEAD}{label}")
+        } else {
+            MID.to_string()
+        },
+    );
+    h.body = Some(head);
+    let mut t = Node::new(NodeKind::Loop, second.to_string());
+    t.body = Some(tail);
+    items[i] = h;
+    items.insert(i + 1, t);
+}
+
+/// Авторез тела цикла: верхний уровень резать нечего, а цикл перерос
+/// лист. Тело — псевдо-узлы верхнего уровня, тот же поиск реза; узел
+/// items[i] заменяется парой кусков, их дальше режет обычная машина.
+/// true — что-то разрезали (внешний цикл обязан пересчитать раскладку).
+fn split_loop_body(items: &mut Vec<Node>, sizes: &Sizes, st: &Style, res: &Layout, limit: f64) -> bool {
+    let (_, lh) = sizes["loop"];
+    for i in 0..items.len() {
+        if items[i].kind != NodeKind::Loop {
+            continue;
+        }
+        let Some(body) = items[i].body.clone() else {
+            continue;
+        };
+        let (pseudo, map) = pseudo_nodes(&body);
+        if pseudo.len() < 5 {
+            continue;
+        }
+        // чанк меряется от низа прошлого узла: трапеция и оба в-гэпа
+        // плюс запас на кружок-выход листа
+        let approach = res.anchors.get(i.wrapping_sub(1)).map_or(0.0, |a| a.y);
+        let body_limit = limit - approach - lh - 2.0 * st.vgap;
+        if body_limit <= 0.0 {
+            continue;
+        }
+        let pres = layout(&pseudo, sizes, st);
+        let Some(j) = auto_cut(&pres, &pseudo, body_limit, pseudo.len() - 1) else {
+            continue;
+        };
+        let m = map[j];
+        // рельс обрывает колонку: кусок кончается им, но не начинается —
+        // иначе лист открывался бы рельсом из пустоты, а операторы за
+        // рельсом не попали бы ни на один лист
+        let mut cut = body[..m].iter().position(is_rail).map_or(m, |r| r + 1);
+        while cut + 1 < body.len() && is_rail(&body[cut]) {
+            cut += 1;
+        }
+        splice_loop(items, i, body[..cut].to_vec(), body[cut..].to_vec());
+        return true;
+    }
+    false
 }
 
 /// Ветки «-> конец» в не-последних частях кончаются кружком: сам «конец»

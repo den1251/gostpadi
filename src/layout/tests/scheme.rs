@@ -1667,3 +1667,83 @@ if x < 0
     assert!(overlaps_ok(&l.shapes));
     assert!(single_entry_ok(&l));
 }
+
+/// Гигантский цикл: тело режется на листы — ленты с микроскопическим
+/// кеглем больше нет. Каждая часть влезает в бюджет, кружки парные,
+/// нижняя трапеция с номером — на последнем листе.
+#[test]
+fn giant_loop_body_splits_across_pages() {
+    let st = Style::default();
+    let mut text = String::from("while i < 24\n");
+    for k in 1..=24 {
+        text.push_str(&format!("    s = s + {k}\n"));
+    }
+    let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    {
+        let l = layout(&nodes, &sizes, &st);
+        eprintln!(
+            "DBG bounds={:?} kinds={:?} body={}",
+            l.bounds,
+            nodes.iter().map(|n| n.kind.clone()).collect::<Vec<_>>(),
+            nodes[1].body.as_ref().map(|b| b.len()).unwrap_or(0)
+        );
+    }
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert!(parts.len() >= 3, "частей мало: {}", parts.len());
+    let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
+    for (k, part) in parts.iter().enumerate() {
+        let l = layout(part, &sizes, &st);
+        assert!(l.bounds.3 <= budget, "лист {k} не влез: {}", l.bounds.3);
+        assert!(l.bounds.3 >= 0.5 * budget, "лист {k} пустой: {}", l.bounds.3);
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
+        assert!(overlaps_ok(&l.shapes), "лист {k}");
+        assert!(dangling_ok(&l).is_ok(), "лист {k}");
+    }
+    for w in parts.windows(2) {
+        let out = w[0].last().unwrap();
+        let inp = w[1].first().unwrap();
+        assert_eq!(out.kind, NodeKind::Conn, "выход листа — кружок: {out:?}");
+        assert_eq!(out.text, inp.text, "буквы пары расходятся");
+    }
+    let last = layout(parts.last().unwrap(), &sizes, &st);
+    let le = last
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "loop_end")
+        .expect("нижняя трапеция на хвостовом листе");
+    assert_eq!(le.lines, vec!["1".to_string()]);
+}
+
+/// continue в теле гигантского цикла: рельсы уходят на кружок-выход
+/// листа — ни пересечений, ни обрывов ни на одном листе.
+#[test]
+fn giant_loop_with_continue_in_body() {
+    let st = Style::default();
+    // continue в ветке if: только такой рельс не обрывает отрисовку тела
+    let mut text = String::from("while i < 24\n");
+    text.push_str("    if i % 2 == 0\n        да: continue\n        нет: s = s + 1\n");
+    for k in 1..=24 {
+        text.push_str(&format!("    s = s + {k}\n"));
+    }
+    let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert!(parts.len() >= 3, "частей мало: {}", parts.len());
+    for (k, part) in parts.iter().enumerate() {
+        let l = layout(part, &sizes, &st);
+        assert_eq!(crossings_ok(&l.shapes, &l.edges), Ok(()), "лист {k}");
+        assert!(overlaps_ok(&l.shapes), "лист {k}");
+        assert!(dangling_ok(&l).is_ok(), "лист {k}");
+    }
+    // рельс головы/середины сходится на кружок-выход листа, а не в пустоту
+    let to_circle = parts.iter().any(|p| {
+        let l = layout(p, &sizes, &st);
+        l.shapes.iter().filter(|sh| sh.kind == "conn").any(|c| {
+            l.edges
+                .iter()
+                .any(|e| !e.arrow && e.points.last() == Some(&(c.cx, c.cy - c.h / 2.0)))
+        })
+    });
+    assert!(to_circle, "ни один рельс не пришёл на кружок-выход");
+}
