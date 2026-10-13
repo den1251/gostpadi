@@ -118,10 +118,7 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
             auto_cut(&res, &items, limit, stop).or(marker)
         };
         let Some(cut) = cut else {
-            // верхний уровень резать нечем: пробуем разрезать тело цикла
-            if split_loop_body(&mut items, sizes, st, &res, limit) {
-                continue;
-            }
+            // верхний уровень резать нечем — лист доливается целиком
             parts.push(items);
             break;
         };
