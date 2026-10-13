@@ -812,7 +812,9 @@ mod tests {
         let st = Style::default();
         let nodes = parse("a = 1\nперенос\nb = 2\n", &st, "en").unwrap();
         assert!(
-            nodes.iter().any(|n| n.kind == NodeKind::Conn && n.text == MARKER),
+            nodes
+                .iter()
+                .any(|n| n.kind == NodeKind::Conn && n.text == MARKER),
             "{nodes:?}"
         );
     }
@@ -821,12 +823,18 @@ mod tests {
     #[test]
     fn transfer_marker_inside_loop_body() {
         let st = Style::default();
-        let nodes = parse("while i < 5\n    a = 1\n    перенос\n    b = 2\n", &st, "en").unwrap();
+        let nodes = parse(
+            "while i < 5\n    a = 1\n    перенос\n    b = 2\n",
+            &st,
+            "en",
+        )
+        .unwrap();
         let lp = nodes.iter().find(|n| n.kind == NodeKind::Loop).unwrap();
         let body = lp.body.as_ref().unwrap();
         assert!(
-            body.iter()
-                .any(|s| matches!(s, Stmt::Node(n) if n.kind == NodeKind::Conn && n.text == MARKER)),
+            body.iter().any(
+                |s| matches!(s, Stmt::Node(n) if n.kind == NodeKind::Conn && n.text == MARKER)
+            ),
             "{body:?}"
         );
     }

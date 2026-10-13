@@ -64,7 +64,11 @@ impl Ctx<'_> {
         let num = self.loop_depth;
         // коридор: шире половины трапеции и любого вложенного содержимого,
         // чтобы рельсы break/continue не задевали фигуры
-        let top0 = if begins { cy1 + lh / 2.0 + self.st.vgap } else { top };
+        let top0 = if begins {
+            cy1 + lh / 2.0 + self.st.vgap
+        } else {
+            top
+        };
         let mark = self.breaks.len();
         let mark_c = self.continues.len();
         let mark_sh = self.shapes.len();

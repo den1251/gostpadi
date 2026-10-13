@@ -15,6 +15,12 @@ fn is_marker_stmt(s: &Stmt) -> bool {
     matches!(s, Stmt::Node(nd) if is_marker(nd))
 }
 
+/// Узел — кусок разрезанного цикла (split помечает их сентинелом в начале
+/// текста): такой цикл уже разрезан, и остаток стоит делить дальше.
+fn is_piece(nd: &Node) -> bool {
+    matches!(nd.text.chars().next(), Some(HEAD | MID | TAIL))
+}
+
 /// Отрезать точку реза можно только перед простым блоком, «если» или
 /// циклом: последняя валидная ≤ limit. Якорь ПРЕДЫДУЩЕГО узла: лист
 /// доливается до последнего, что влез. j ∈ 2..stop — и до, и после
@@ -80,6 +86,19 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         let fits = res.bounds.3 <= budget;
         let marker = items.iter().position(is_marker);
         if fits && marker.is_none() {
+            parts.push(items);
+            break;
+        }
+        // цикл, чьё тело на лист не влезает, режем раньше прочих точек
+        // реза: иначе поток перед ним уедет на пустоватый лист
+        if !fits && split_loop_body(&mut items, sizes, st, &res, limit) {
+            continue;
+        }
+        // короткий остаток делим, только если делить есть что — маркер или
+        // уже разрезанный цикл. Иначе выходит лишний пустоватый лист:
+        // схема из четырёх узлов и так уезжает на один лист целиком
+        let divisible = items.len() >= 6 || marker.is_some() || items.iter().any(is_piece);
+        if !fits && !divisible {
             parts.push(items);
             break;
         }
@@ -238,7 +257,13 @@ fn splice_loop(items: &mut Vec<Node>, i: usize, head: Vec<Stmt>, tail: Vec<Stmt>
 /// лист. Тело — псевдо-узлы верхнего уровня, тот же поиск реза; узел
 /// items[i] заменяется парой кусков, их дальше режет обычная машина.
 /// true — что-то разрезали (внешний цикл обязан пересчитать раскладку).
-fn split_loop_body(items: &mut Vec<Node>, sizes: &Sizes, st: &Style, res: &Layout, limit: f64) -> bool {
+fn split_loop_body(
+    items: &mut Vec<Node>,
+    sizes: &Sizes,
+    st: &Style,
+    res: &Layout,
+    limit: f64,
+) -> bool {
     let (_, lh) = sizes["loop"];
     for i in 0..items.len() {
         if items[i].kind != NodeKind::Loop {
@@ -278,11 +303,7 @@ fn split_loop_body(items: &mut Vec<Node>, sizes: &Sizes, st: &Style, res: &Layou
 
 /// Ветки «-> конец» в не-последних частях кончаются кружком: сам «конец»
 /// живёт на последнем листе, туда же ставятся его кружки.
-fn link_branches_to_end(
-    parts: &mut [Vec<Node>],
-    letter: &impl Fn(usize) -> char,
-    li: &mut usize,
-) {
+fn link_branches_to_end(parts: &mut [Vec<Node>], letter: &impl Fn(usize) -> char, li: &mut usize) {
     let mut links: Vec<(char, usize)> = Vec::new();
     for pi in 0..parts.len().saturating_sub(1) {
         for nd in &mut parts[pi] {

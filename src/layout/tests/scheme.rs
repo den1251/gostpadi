@@ -197,10 +197,7 @@ fn mid_loop_no_trapezoids() {
 /// приходит на верх кружка, а не в пустоту и не сквозь фигуры.
 #[test]
 fn break_rail_on_head_page_exits_via_letter() {
-    let head = loop_node(
-        &format!("{HEAD}while i < 5"),
-        vec![s("i = i + 1"), sbrk()],
-    );
+    let head = loop_node(&format!("{HEAD}while i < 5"), vec![s("i = i + 1"), sbrk()]);
     let nodes = vec![
         node(NodeKind::Term, "начало"),
         head,
@@ -1695,7 +1692,11 @@ fn giant_loop_body_splits_across_pages() {
     for (k, part) in parts.iter().enumerate() {
         let l = layout(part, &sizes, &st);
         assert!(l.bounds.3 <= budget, "лист {k} не влез: {}", l.bounds.3);
-        assert!(l.bounds.3 >= 0.5 * budget, "лист {k} пустой: {}", l.bounds.3);
+        assert!(
+            l.bounds.3 >= 0.5 * budget,
+            "лист {k} пустой: {}",
+            l.bounds.3
+        );
         assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
         assert!(overlaps_ok(&l.shapes), "лист {k}");
         assert!(dangling_ok(&l).is_ok(), "лист {k}");
