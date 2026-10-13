@@ -1835,3 +1835,85 @@ fn dead_candidates_after_rail_not_drawn() {
         assert!(drawn.contains(&t), "живой оператор {t} потерян: {drawn:?}");
     }
 }
+
+/// Маркеры подряд: лист из одних кружков не рождается — лишний маркер
+/// глотается, буква на него не тратится. То же с маркером первым оператором.
+#[test]
+fn two_consecutive_markers_no_empty_sheet() {
+    let st = Style::default();
+    let text = "a = 1\nперенос\nперенос\nb = 2\n";
+    let nodes = crate::frontend::gvn::parse(text, &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    for (k, part) in parts.iter().enumerate() {
+        assert!(
+            part.iter().any(|n| n.kind != NodeKind::Conn),
+            "лист {k} из одних кружков: {part:?}"
+        );
+        let l = layout(part, &sizes, &st);
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
+        assert!(dangling_ok(&l).is_ok(), "лист {k}");
+    }
+    let out = parts[0].last().unwrap();
+    let inp = parts[1].first().unwrap();
+    assert_eq!(out.kind, NodeKind::Conn, "{out:?}");
+    assert_eq!(out.text, inp.text, "одна буква на пару листов");
+    assert!(
+        parts[0].iter().any(|n| n.text == "a = 1") && parts[1].iter().any(|n| n.text == "b = 2"),
+        "операторы разъехались не туда: {parts:?}"
+    );
+    // маркер первым оператором: резать перед ним нечего — глотается,
+    // буква не тратится, лишнего листа нет
+    let items = vec![
+        node(NodeKind::Conn, crate::frontend::MARKER),
+        node(NodeKind::Act, "a = 1"),
+        node(NodeKind::Act, "b = 2"),
+    ];
+    let sizes = normalize(&items, &st);
+    let parts = split_scheme(items, &sizes, &st);
+    assert_eq!(
+        parts.len(),
+        1,
+        "маркер в голове обязан глотаться: {parts:?}"
+    );
+    assert!(
+        !parts[0].iter().any(|n| n.kind == NodeKind::Conn),
+        "кружок из ниоткуда: {parts:?}"
+    );
+}
+
+/// 30 разрывов в длинной схеме: буквы зацикливаются (счётчик общий, wrap по
+/// % длины алфавита), и ни один лист не выходит пустоватым из кружков.
+#[test]
+fn letters_wrap_past_alphabet() {
+    let st = Style::default();
+    let mut text = String::new();
+    for k in 1..=30 {
+        text.push_str(&format!("a = {k}\nперенос\nперенос\n"));
+    }
+    text.push_str("b = 1\n");
+    let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    let n_letters = st.letters.chars().count();
+    assert!(
+        parts.len() > n_letters,
+        "частей {} не больше букв {n_letters} — wrap не проверить",
+        parts.len()
+    );
+    for (k, part) in parts.iter().enumerate() {
+        assert!(
+            part.iter().any(|n| n.kind != NodeKind::Conn),
+            "лист {k} пустоват: {part:?}"
+        );
+        let l = layout(part, &sizes, &st);
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
+        assert!(dangling_ok(&l).is_ok(), "лист {k}");
+    }
+    assert_eq!(
+        parts[0].last().unwrap().text,
+        parts[n_letters].last().unwrap().text,
+        "буквы обязаны зацикливаться"
+    );
+}

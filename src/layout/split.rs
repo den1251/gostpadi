@@ -63,9 +63,15 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
     let limit = (st.a4_h - 2.0 * st.page_pad) * CUT_SEARCH_FRAC;
     let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
     loop {
-        // маркер у края остатка съедаем: пустой хвост и хвост из одного
-        // «конца» не дают ни листа, ни сиротского кружка
-        while let Some(f) = items.iter().position(is_marker) {
+        // маркер первым в остатке: резать перед ним нечего — глотаем, буква
+        // не тратится (иначе вышел бы лист из одного кружка)
+        while items.first().is_some_and(is_marker) {
+            items.remove(0);
+        }
+        // маркер в конце остатка (за ним только «конец» или ничего): пустой
+        // хвост и хвост из одного «конца» не дают ни листа, ни сиротского
+        // кружка — тоже глотаем, с хвоста очереди
+        while let Some(f) = items.iter().rposition(is_marker) {
             if items[f + 1..].iter().all(|n| n.kind == NodeKind::Term) {
                 items.remove(f);
             } else {
@@ -128,7 +134,10 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         head.push(Node::new(NodeKind::Conn, l.to_string()));
         parts.push(head);
         let mut tail: Vec<Node> = items.drain(cut..).collect();
-        if is_marker(&tail[0]) {
+        // маркеры подряд на стыке листов: голова уже кончилась — лишние
+        // глотаем, иначе средний лист выходил бы из двух кружков друг под
+        // другом (первый же кружок — это и есть разрыв)
+        while tail.first().is_some_and(is_marker) {
             tail.remove(0);
         }
         let mut rest = vec![Node::new(NodeKind::Conn, l.to_string())];
