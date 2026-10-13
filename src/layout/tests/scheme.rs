@@ -1677,15 +1677,6 @@ fn giant_loop_body_splits_across_pages() {
     }
     let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
     let sizes = normalize(&nodes, &st);
-    {
-        let l = layout(&nodes, &sizes, &st);
-        eprintln!(
-            "DBG bounds={:?} kinds={:?} body={}",
-            l.bounds,
-            nodes.iter().map(|n| n.kind.clone()).collect::<Vec<_>>(),
-            nodes[1].body.as_ref().map(|b| b.len()).unwrap_or(0)
-        );
-    }
     let parts = split_scheme(nodes, &sizes, &st);
     assert!(parts.len() >= 3, "частей мало: {}", parts.len());
     let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
