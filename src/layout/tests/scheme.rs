@@ -2,8 +2,10 @@
 //! single-entry в «конец», тупики return, проверки на примерах.
 
 use super::*;
+use crate::layout::measure::{HEAD, MID, TAIL};
 use crate::layout::{
-    crossings_ok, layout, measure, normalize, overlaps_ok, single_entry_ok, split_scheme,
+    crossings_ok, dangling_ok, layout, measure, normalize, overlaps_ok, single_entry_ok,
+    split_scheme,
 };
 
 #[test]
@@ -114,6 +116,114 @@ fn loop_begin_shows_keyword() {
         begins.iter().any(|t| t == "for i = 0; i < 10; i++"),
         "{begins:?}"
     );
+}
+
+/// Голова разрезанного цикла: верхняя трапеция есть, нижней нет — она
+/// уехала на следующий лист вместе с хвостом.
+#[test]
+fn head_loop_no_end_trapezoid() {
+    let head = loop_node(&format!("{HEAD}while i < 5"), vec![s("i = i + 1")]);
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        head,
+        node(NodeKind::Conn, "А"),
+    ];
+    let l = lay(&nodes);
+    let lb = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "loop_begin")
+        .expect("верхняя трапеция");
+    assert_eq!(
+        lb.lines,
+        vec!["while i < 5".to_string()],
+        "сентинел в текст не протекает"
+    );
+    assert!(
+        !l.shapes.iter().any(|sh| sh.kind == "loop_end"),
+        "нижняя трапеция — на следующем листе"
+    );
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(dangling_ok(&l).is_ok());
+}
+
+/// Хвост разрезанного цикла: нижняя трапеция с номером цикла, верхней
+/// нет — она осталась на предыдущем листе.
+#[test]
+fn tail_loop_only_end_trapezoid() {
+    let tail = loop_node(&TAIL.to_string(), vec![s("i = i + 1")]);
+    let nodes = vec![
+        node(NodeKind::Conn, "А"),
+        tail,
+        node(NodeKind::Term, "конец"),
+    ];
+    let l = lay(&nodes);
+    assert!(!l.shapes.iter().any(|sh| sh.kind == "loop_begin"));
+    let le = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "loop_end")
+        .expect("нижняя трапеция");
+    assert_eq!(
+        le.lines,
+        vec!["1".to_string()],
+        "номер тот же, что у целого цикла: глубина выводится из структуры"
+    );
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(dangling_ok(&l).is_ok());
+}
+
+/// Середина разрезанного цикла: трапеций нет вовсе — лист держится
+/// парой кружков-соединителей.
+#[test]
+fn mid_loop_no_trapezoids() {
+    let mid = loop_node(&MID.to_string(), vec![s("i = i + 1"), s("j = j + 1")]);
+    let nodes = vec![node(NodeKind::Conn, "А"), mid, node(NodeKind::Conn, "А")];
+    let l = lay(&nodes);
+    assert!(
+        !l.shapes.iter().any(|sh| sh.kind.starts_with("loop")),
+        "ни трапеций, ни номера"
+    );
+    assert_eq!(l.shapes.iter().filter(|sh| sh.kind == "conn").count(), 2);
+    assert!(l
+        .shapes
+        .iter()
+        .any(|sh| sh.lines == vec!["i = i + 1".to_string()]));
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(dangling_ok(&l).is_ok());
+}
+
+/// Рельса break на головном листе идёт к кружку-выходу: горизонталь
+/// приходит на верх кружка, а не в пустоту и не сквозь фигуры.
+#[test]
+fn break_rail_on_head_page_exits_via_letter() {
+    let head = loop_node(
+        &format!("{HEAD}while i < 5"),
+        vec![s("i = i + 1"), sbrk()],
+    );
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        head,
+        node(NodeKind::Conn, "А"),
+    ];
+    let l = lay(&nodes);
+    let conn = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "conn")
+        .expect("кружок-выход");
+    let rail = l
+        .edges
+        .iter()
+        .find(|e| !e.arrow && e.points.len() >= 4)
+        .expect("рельса в коридоре");
+    assert_eq!(
+        rail.points.last().copied(),
+        Some((conn.cx, conn.cy - conn.h / 2.0)),
+        "T-стык на вертикали входа в кружок"
+    );
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(dangling_ok(&l).is_ok());
 }
 
 /// Репорт (задача 3): у ромба с одной непустой веткой, ушедшей рельсой

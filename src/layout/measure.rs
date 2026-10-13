@@ -8,6 +8,18 @@ const TERM_LINE_FACTOR: f64 = 0.8;
 /// Минимальная ширина ромба: 11 модулей сетки (b = 2a, читаемость «да/нет»).
 const IF_MIN_W_GRIDS: f64 = 11.0;
 
+/// Сентинелы кусков разрезанного цикла (ставит split): 1 — голова,
+/// 3 — середина, 2 — хвост. Это не текст: срезаем их и перед замером,
+/// и перед рисованием заголовка — иначе размер «loop» раздуется на всю
+/// пачку (uniform_sizes), а на трапеции появится мусорный глиф.
+pub(super) const HEAD: char = '\u{1}';
+pub(super) const MID: char = '\u{3}';
+pub(super) const TAIL: char = '\u{2}';
+
+pub(super) fn no_sentinel(s: &str) -> &str {
+    s.trim_start_matches(|c| c == HEAD || c == MID || c == TAIL)
+}
+
 /// (ширина, высота) фигуры по её тексту; порт gostpadi.py measure().
 /// Текст уже перенесён — строки разделяются \n.
 pub fn measure(st: &Style, kind: &str, text: &str) -> (f64, f64) {
@@ -67,7 +79,7 @@ fn put_items(sizes: &mut Sizes, st: &Style, items: &[Stmt]) {
 
 fn put_node(sizes: &mut Sizes, st: &Style, nd: &Node) {
     if nd.kind == NodeKind::Loop {
-        put(sizes, st, "loop", &nd.loop_label());
+        put(sizes, st, "loop", no_sentinel(&nd.loop_label()));
     } else {
         put(sizes, st, kind_name(&nd.kind), &nd.text);
     }
