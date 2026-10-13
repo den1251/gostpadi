@@ -219,9 +219,10 @@ pub extern "C" fn gostpadi_render_batch(
     // функции с телом» + err-подсветка — после T7 (11.10.2026) пустых
     // схем не бывает, и текст врёт. Разделяем по подстроке: пустой
     // вход -> empty, всё остальное -> errors.
+    let rendered = pipeline::render_batch(ok, &st);
     let mut out = String::with_capacity(4096);
     let mut files: Vec<String> = Vec::new();
-    for (i, (name, pages)) in rendered.iter().enumerate() {
+    for (name, pages) in rendered.iter() {
         let mut f = String::from("{\"name\":");
         f.push('"');
         f.push_str(&json_escape(name));
