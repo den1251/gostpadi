@@ -39,6 +39,26 @@ fn unpack(b: &[u8]) -> Option<Vec<(String, String, bool)>> {
     Some(out)
 }
 
+/// Экранирование без кавычек: для сборки мелких объектов через format!.
+/// Кавычки навешивает вызывающий — как у `json_str`.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = std::fmt::write(&mut out, format_args!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// JSON-строка в буфер: кавычки, слэш и управляющие символы.
 fn json_str(out: &mut String, s: &str) {
     out.push('"');
@@ -192,44 +212,57 @@ pub extern "C" fn gostpadi_render_batch(
             Err((_, e)) => errors.push((name.clone(), e)),
         }
     }
-    let rendered = pipeline::render_batch(ok, &st);
+    // вход без рисуемых операторов (пустой main, файл из одних
+    // return/объявлений) — отказ фронтенда, а не ошибка разбора:
+    // сайт показывает его в «empty» с человеческим текстом. Раньше
+    // весь отказ шёл в «errors» и приезжал как «в коде нет ни одной
+    // функции с телом» + err-подсветка — после T7 (11.10.2026) пустых
+    // схем не бывает, и текст врёт. Разделяем по подстроке: пустой
+    // вход -> empty, всё остальное -> errors.
     let mut out = String::with_capacity(4096);
-    out.push_str("{\"ok\":true,\"files\":[");
+    let mut files: Vec<String> = Vec::new();
     for (i, (name, pages)) in rendered.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":");
-        json_str(&mut out, name);
-        out.push_str(",\"sheets\":[");
+        let mut f = String::from("{\"name\":");
+        f.push('"');
+        f.push_str(&json_escape(name));
+        f.push_str("\",\"sheets\":[");
         for (k, p) in pages.iter().enumerate() {
             if k > 0 {
-                out.push(',');
+                f.push(',');
             }
-            json_str(&mut out, p);
+            f.push('"');
+            f.push_str(&json_escape(p));
+            f.push('"');
         }
-        out.push_str("]}");
+        f.push_str("]}");
+        files.push(f);
     }
+    let mut errs: Vec<String> = Vec::new();
+    let mut empty: Vec<String> = Vec::new();
+    for (name, e) in &errors {
+        let item = format!(
+            "{{\"name\":\"{}\",\"msg\":\"{}\",\"line\":{},\"col\":{},\"src\":{}}}",
+            json_escape(name),
+            json_escape(&e.msg),
+            e.line.map_or("null".into(), |l| l.to_string()),
+            e.col.map_or("null".into(), |c| c.to_string()),
+            match &e.src {
+                Some(s) => format!("\"{}\"", json_escape(s)),
+                None => "null".to_string(),
+            }
+        );
+        if e.msg.contains("нет рисуемых операторов") {
+            empty.push(item);
+        } else {
+            errs.push(item);
+        }
+    }
+    out.push_str("{\"ok\":true,\"files\":[");
+    out.push_str(&files.join(","));
+    out.push_str("],\"empty\":[");
+    out.push_str(&empty.join(","));
     out.push_str("],\"errors\":[");
-    for (i, (name, e)) in errors.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":");
-        json_str(&mut out, name);
-        out.push_str(",\"msg\":");
-        json_str(&mut out, &e.msg);
-        out.push_str(",\"line\":");
-        out.push_str(&e.line.map_or("null".into(), |l| l.to_string()));
-        out.push_str(",\"col\":");
-        out.push_str(&e.col.map_or("null".into(), |c| c.to_string()));
-        out.push_str(",\"src\":");
-        match &e.src {
-            Some(s) => json_str(&mut out, s),
-            None => out.push_str("null"),
-        }
-        out.push('}');
-    }
+    out.push_str(&errs.join(","));
     out.push_str("]}");
     let boxed = out.into_bytes().into_boxed_slice();
     let p = boxed.as_ptr() as *mut u8;

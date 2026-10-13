@@ -755,12 +755,22 @@ function renderNow() {
 function applyResult(res, items, ms) {
   // Ошибок разбора больше нет: код без main рисуется пустым, такие
   // перечислены в "empty" и помечаются в списке файлов.
-  const errors = (res.empty || []).map(name => ({
-    name,
-    line: null,
-    col: null,
-    msg: "в коде нет ни одной функции с телом — рисовать нечего",
-  }));
+  // Пустой вход (пустой main, файл из одних return/объявлений) —
+  // движок отдаёт имя, иногда со своим msg. Пустых схем не бывает:
+  // такой вход — отказ с человеческим текстом («нет рисуемых
+  // операторов»).
+  const errors = (res.empty || []).map(e => {
+    const name = typeof e === "string" ? e : e.name;
+    return {
+      name,
+      line: typeof e === "object" && e ? e.line : null,
+      col: null,
+      msg:
+        typeof e === "object" && e && e.msg
+          ? e.msg
+          : "в коде нет рисуемых операторов — рисовать нечего (тела функций пусты или состоят из одних return/объявлений)",
+    };
+  });
   badNames = new Set(errors.map(e => e.name));
   sheets = [];
   if (res.ok) {
@@ -797,7 +807,7 @@ function applyResult(res, items, ms) {
   const pages = sheets.length;
   const batchNote = items.length > 1
     ? ' · <span class="batchnote">пачка: блоки одного размера</span>' : "";
-  const errNote = badNames.size ? ` · без тела main: ${[...badNames].join(", ")}` : "";
+  const errNote = badNames.size ? ` · без рисуемых операторов: ${[...badNames].join(", ")}` : "";
   const what = schemes === pages
     ? `${pages} ${plural(pages, "лист", "листа", "листов")}`
     : `${schemes} ${plural(schemes, "схема", "схемы", "схем")}`;
