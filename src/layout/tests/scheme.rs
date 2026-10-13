@@ -1747,3 +1747,50 @@ fn giant_loop_with_continue_in_body() {
     });
     assert!(to_circle, "ни один рельс не пришёл на кружок-выход");
 }
+
+/// Маркер ручного переноса в теле цикла: листы ломаются ровно по нему,
+/// даже если цикл целиком влезает на один лист.
+#[test]
+fn manual_marker_inside_loop_body() {
+    let st = Style::default();
+    let text = "\
+while i < 5
+    a = 1
+    b = 2
+    перенос
+    c = 3
+    d = 4
+";
+    let nodes = crate::frontend::gvn::parse(text, &st, "en").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    assert!(
+        !parts
+            .iter()
+            .flatten()
+            .any(|n| n.text == crate::frontend::MARKER),
+        "маркер съеден"
+    );
+    let out = parts[0].last().unwrap();
+    let inp = parts[1].first().unwrap();
+    assert_eq!(out.kind, NodeKind::Conn, "{out:?}");
+    assert_eq!(out.text, inp.text, "одна буква на пару листов");
+    // голова несёт верхнюю трапецию, хвост — нижнюю с номером цикла
+    let l1 = layout(&parts[0], &sizes, &st);
+    let l2 = layout(&parts[1], &sizes, &st);
+    assert!(l1.shapes.iter().any(|sh| sh.kind == "loop_begin"));
+    assert!(!l1.shapes.iter().any(|sh| sh.kind == "loop_end"));
+    assert!(!l2.shapes.iter().any(|sh| sh.kind == "loop_begin"));
+    let le = l2
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "loop_end")
+        .expect("нижняя трапеция на хвосте");
+    assert_eq!(le.lines, vec!["1".to_string()]);
+    for l in [&l1, &l2] {
+        assert_eq!(crossings_ok(&l.shapes, &l.edges), Ok(()));
+        assert!(overlaps_ok(&l.shapes));
+        assert!(dangling_ok(l).is_ok());
+    }
+}

@@ -69,6 +69,13 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         if items.is_empty() {
             break;
         }
+        // маркер в теле цикла: тело режется по нему, границу метит такой
+        // же маркер — листы ломает обычная машина разрезов
+        if let Some(i) = items.iter().position(|nd| body_marker(nd).is_some()) {
+            if splice_body_at_marker(&mut items, i) {
+                continue;
+            }
+        }
         let res = layout(&items, sizes, st);
         let fits = res.bounds.3 <= budget;
         let marker = items.iter().position(is_marker);
@@ -76,8 +83,14 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
             parts.push(items);
             break;
         }
-        let cut = if fits {
-            marker // влезло, но маркер требует разрыв: режем ровно по нему
+        // ручной приоритет: маркер режет страницу, если голова до него
+        // влезает на лист целиком (с кружком-выходом); не влезает — сперва
+        // авторез внутри головы, маркер ждёт следующей страницы
+        let head_fits = marker.map_or(true, |f| {
+            layout(&items[..f], sizes, st).bounds.3 + st.vgap + 2.0 * st.conn_r <= budget
+        });
+        let cut = if fits || (marker.is_some() && head_fits) {
+            marker
         } else {
             // маркер — потолок автореза: кусок не должен унести его с собой
             let stop = marker
@@ -159,6 +172,39 @@ fn pseudo_nodes(body: &[Stmt]) -> (Vec<Node>, Vec<usize>) {
 /// Рельс (break/continue) обрывает колонку: поток после него уходит.
 fn is_rail(s: &Stmt) -> bool {
     matches!(s, Stmt::Break | Stmt::Continue)
+}
+
+/// Первый маркер ручного переноса прямо в теле цикла. Во вложенных
+/// телах не ищем: там маркер молча глотает охрана колонки.
+fn body_marker(nd: &Node) -> Option<usize> {
+    if nd.kind != NodeKind::Loop {
+        return None;
+    }
+    nd.body.as_ref()?.iter().position(is_marker_stmt)
+}
+
+/// Маркер ручного переноса в теле цикла: тело режется по нему, а на
+/// границе встаёт такой же маркер — страницу ломает обычная машина
+/// разрезов (листы по маркерам выходят, даже если цикл влезал целиком).
+/// Маркер у края тела резать не на чем — он съедается.
+fn splice_body_at_marker(items: &mut Vec<Node>, i: usize) -> bool {
+    let mut body = match items[i].body.clone() {
+        Some(b) => b,
+        None => return false,
+    };
+    let Some(f) = body.iter().position(is_marker_stmt) else {
+        return false;
+    };
+    if f == 0 || f + 1 == body.len() {
+        body.remove(f);
+        items[i].body = Some(body);
+        return false;
+    }
+    let tail = body[f + 1..].to_vec();
+    body.truncate(f);
+    splice_loop(items, i, body, tail);
+    items.insert(i + 1, Node::new(NodeKind::Conn, MARKER));
+    true
 }
 
 /// items[i] — цикл; тело режется по m: первый кусок остаётся на месте,
