@@ -22,7 +22,7 @@
   /* Дуэт «ман-страницы»: крем-бумага по системе, тёмный чернильный по кнопке. */
   html[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #201d1d; --bg2: #302c2c;
+    --bg: #161313; --bg2: #201d1d;
     --line: rgba(253, 252, 252, .14); --line2: rgba(253, 252, 252, .3);
     --ink: #fdfcfc; --muted: #9a9898; --faint: #6e6b6b;
     --accent: #4da3ff; --accent-ink: #201d1d; --accent-soft: rgba(77, 163, 255, .14);
@@ -49,7 +49,7 @@
   @media (prefers-color-scheme: dark) {
     html[data-theme="auto"] {
       color-scheme: dark;
-      --bg: #201d1d; --bg2: #302c2c;
+      --bg: #161313; --bg2: #201d1d;
       --line: rgba(253, 252, 252, .14); --line2: rgba(253, 252, 252, .3);
       --ink: #fdfcfc; --muted: #9a9898; --faint: #6e6b6b;
       --accent: #4da3ff; --accent-ink: #201d1d; --accent-soft: rgba(77, 163, 255, .14);
@@ -67,7 +67,7 @@ code,.mono{font-family:var(--mono)}
 .wrap{width:var(--w);margin:0 auto}
 
 /* ---------- шапка ---------- */
-header{border-bottom:1px solid var(--line);position:relative;z-index:2}
+header{border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;background:var(--bg)}
 header .wrap{height:56px;display:flex;align-items:center;gap:1rem}
 .logo{display:flex;align-items:center;gap:.5rem;font-weight:600;color:var(--ink);letter-spacing:-.01em;font-family:var(--mono);font-size:15px}
 .ver{font:600 11px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:var(--r);padding:.14rem .4rem;letter-spacing:.02em}
