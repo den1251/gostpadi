@@ -1728,16 +1728,88 @@ fn giant_loop_with_continue_in_body() {
         assert!(overlaps_ok(&l.shapes), "лист {k}");
         assert!(dangling_ok(&l).is_ok(), "лист {k}");
     }
-    // рельс головы/середины сходится на кружок-выход листа, а не в пустоту
-    let to_circle = parts.iter().any(|p| {
+    // рельс головы/середины приходит в живой поток листа, а не в пустоту:
+    // либо на кружок-выход (стык листов), либо на ствол следующей части —
+    // кусок из одного оператора ставит на лист несколько частей, и тогда
+    // кружка между ними нет, рельса сходится на вход следующей.
+    let drained = parts.iter().any(|p| {
         let l = layout(p, &sizes, &st);
-        l.shapes.iter().filter(|sh| sh.kind == "conn").any(|c| {
-            l.edges
+        l.edges.iter().filter(|e| !e.arrow).any(|e| {
+            let Some(last) = e.points.last() else {
+                return false;
+            };
+            let to_circle = l
+                .shapes
                 .iter()
-                .any(|e| !e.arrow && e.points.last() == Some(&(c.cx, c.cy - c.h / 2.0)))
+                .filter(|sh| sh.kind == "conn")
+                .any(|c| last == &(c.cx, c.cy - c.h / 2.0));
+            let to_trunk = l.edges.iter().any(|a| {
+                a.arrow && (a.points.first() == Some(last) || a.points.last() == Some(last))
+            });
+            to_circle || to_trunk
         })
     });
-    assert!(to_circle, "ни один рельс не пришёл на кружок-выход");
+    assert!(drained, "ни один рельс не пришёл в поток листа");
+}
+
+/// Меню (lab4): тело цикла из четырёх гигантских «если» режется перед
+/// каждым оператором — один оператор на лист, каждый в бюджете, кружки
+/// на стыках парные.
+#[test]
+fn menu_body_splits_per_operator() {
+    let st = Style::default();
+    let big_if = |t: &str| {
+        let mut d = node(NodeKind::Decision, t);
+        d.branches = vec![
+            br(
+                "да",
+                (0..6).map(|k| s(&format!("a = a + {k}"))).collect(),
+                false,
+            ),
+            br(
+                "нет",
+                (0..6).map(|k| s(&format!("b = b + {k}"))).collect(),
+                false,
+            ),
+        ];
+        d
+    };
+    let body: Vec<Stmt> = (0..4)
+        .map(|k| Stmt::Node(Box::new(big_if(&format!("if r == {k}")))))
+        .collect();
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        loop_node("while !done", body),
+        node(NodeKind::Term, "конец"),
+    ];
+    let sizes = normalize(&nodes, &st);
+    let parts = split_scheme(nodes, &sizes, &st);
+    assert_eq!(parts.len(), 4, "по куску на оператор: {}", parts.len());
+    let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
+    for (k, part) in parts.iter().enumerate() {
+        let l = layout(part, &sizes, &st);
+        assert!(l.bounds.3 <= budget, "лист {k} не влез: {}", l.bounds.3);
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
+        assert!(overlaps_ok(&l.shapes), "лист {k}");
+        assert!(dangling_ok(&l).is_ok(), "лист {k}");
+    }
+    for w in parts.windows(2) {
+        let out = w[0].last().unwrap();
+        let inp = w[1].first().unwrap();
+        assert_eq!(out.kind, NodeKind::Conn, "выход листа — кружок: {out:?}");
+        assert_eq!(out.text, inp.text, "буквы пары расходятся");
+    }
+    // трапеции цикла: вход на головном листе, номер — на хвостовом
+    let first = layout(&parts[0], &sizes, &st);
+    let last = layout(parts.last().unwrap(), &sizes, &st);
+    assert!(
+        first.shapes.iter().any(|sh| sh.kind == "loop_begin"),
+        "нет входа цикла на первом листе"
+    );
+    assert!(
+        last.shapes.iter().any(|sh| sh.kind == "loop_end"),
+        "нет хвоста цикла на последнем листе"
+    );
 }
 
 /// Маркер ручного переноса в теле цикла: листы ломаются ровно по нему,

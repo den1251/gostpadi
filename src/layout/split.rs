@@ -23,12 +23,13 @@ fn is_piece(nd: &Node) -> bool {
 
 /// Отрезать точку реза можно только перед простым блоком, «если» или
 /// циклом: последняя валидная ≤ limit. Якорь ПРЕДЫДУЩЕГО узла: лист
-/// доливается до последнего, что влез. j ∈ 2..stop — и до, и после
-/// реза остаётся хотя бы пара узлов (лист не начинается огрызком).
-fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize) -> Option<usize> {
+/// доливается до последнего, что влез. j ∈ from..stop — и до, и после
+/// реза остаётся хотя бы пара узлов (лист не начинается огрызком); тело
+/// цикла режется «перед каждым оператором» — там from = 1.
+fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize, from: usize) -> Option<usize> {
     let mut cut = None;
     let mut first_valid = None;
-    for j in 2..stop {
+    for j in from..stop {
         if !matches!(
             items[j].kind,
             NodeKind::Act | NodeKind::Io | NodeKind::Decision | NodeKind::Loop
@@ -110,7 +111,7 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         // короткий остаток делим, только если делить есть что — маркер или
         // уже разрезанный цикл. Иначе выходит лишний пустоватый лист:
         // схема из четырёх узлов и так уезжает на один лист целиком
-        let divisible = items.len() >= 6 || marker.is_some() || items.iter().any(is_piece);
+        let divisible = items.len() >= 3 || marker.is_some() || items.iter().any(is_piece);
         if !fits && !divisible {
             parts.push(items);
             break;
@@ -128,7 +129,7 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
             let stop = marker
                 .unwrap_or(items.len())
                 .min(items.len().saturating_sub(1));
-            auto_cut(&res, &items, limit, stop).or(marker)
+            auto_cut(&res, &items, limit, stop, 2).or(marker)
         };
         let Some(cut) = cut else {
             // верхний уровень резать нечем — лист доливается целиком
@@ -292,7 +293,7 @@ fn split_loop_body(
             continue;
         };
         let (pseudo, map) = pseudo_nodes(&body);
-        if pseudo.len() < 4 {
+        if pseudo.len() < 2 {
             continue;
         }
         // чанк меряется от низа прошлого узла: трапеция и оба в-гэпа
@@ -303,7 +304,7 @@ fn split_loop_body(
             continue;
         }
         let pres = layout(&pseudo, sizes, st);
-        let Some(j) = auto_cut(&pres, &pseudo, body_limit, pseudo.len() - 1) else {
+        let Some(j) = auto_cut(&pres, &pseudo, body_limit, pseudo.len(), 1) else {
             continue;
         };
         let m = map[j];
@@ -405,12 +406,14 @@ mod dbg_parts {
                     .collect();
                 let anchors: Vec<i64> = l.anchors.iter().map(|a| a.y as i64).collect();
                 println!(
-                    "  часть {i}: узлов {} h {:.0} scale {:.3} kinds {kinds:?}\n    texts {texts:?}\n    anchors {anchors:?}",
+                    "  часть {i}: узлов {} {}x{} scale {:.3}/{:.3} kinds {kinds:?}\n    texts {texts:?}\n    anchors {anchors:?}",
                     p.len(),
-                    l.bounds.3,
+                    l.bounds.2 as i64,
+                    l.bounds.3 as i64,
+                    (st.a4_w - 2.0 * st.page_pad) / l.bounds.2.max(1.0),
                     (st.a4_h - 2.0 * st.page_pad) / l.bounds.3.max(1.0),
                 );
-                if l.bounds.3 > budget {
+                if l.bounds.3 > budget || l.bounds.2 > st.a4_w - 2.0 * st.page_pad {
                     for sh in &l.shapes {
                         println!(
                             "    фигура {} ({:.0},{:.0}) {:.0}x{:.0} {:?}",
