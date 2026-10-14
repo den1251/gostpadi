@@ -135,7 +135,8 @@ h1 em{font-style:normal;color:var(--accent)}
 .stack:hover .p3{transform:rotate(4.6deg) translateY(76px)}
 @keyframes drop{from{opacity:0;transform:translateY(14px) rotate(0deg)}}
 @media (prefers-reduced-motion: reduce){.paper{animation:none;transition:none}}
-@media (max-width:900px){.stack{height:270px;max-width:280px}}
+@media (max-width:900px){
+  
 
 /* ---------- факты ---------- */
 .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
@@ -200,6 +201,29 @@ footer a{color:var(--muted)}
 
 
 footer a:hover{color:var(--ink)}
+
+/* ---------- телефон ---------- */
+@media (max-width:640px){
+  .hero{padding:2.2rem 0 2.6rem;gap:2rem}
+  h1{font-size:clamp(1.9rem,8.5vw,2.4rem)}
+  .hero .lead{font-size:15.5px;line-height:1.62}
+  .hero .btn{width:100%;justify-content:center}
+  .stack{max-width:250px;height:auto}
+  .paper{position:static}
+  .paper.p2,.paper.p3{display:none}
+  .paper.p1{transform:rotate(-1.4deg)}
+  .paper.p1 svg{max-height:130px}
+  h1 br{display:none}
+  header .wrap{padding:.7rem 1rem}
+  .facts{grid-template-columns:repeat(2,1fr)}
+  .fact{padding:.8rem .9rem}
+  section{padding:2.8rem 0 0}
+  section.ex{padding:3.2rem 0 0}
+  .grid{gap:.9rem}
+  .card .fig{height:210px}
+  .why{padding:3rem 0 0}
+  .donate-box{padding:1.2rem}
+}
 </style>
 </head>
 <body>
@@ -227,7 +251,7 @@ footer a:hover{color:var(--ink)}
 
   <div class="hero">
     <div>
-      <h1>Блок-схема из C-кода —<br><em>за пару миллисекунд</em></h1>
+      <h1>Блок-схема из C-кода — <br><em>за пару миллисекунд</em></h1>
       <p class="lede">
         Вставьте код — получите готовую схему для отчёта. Всё считается
         в браузере, код никуда не отправляется. Даже если код не
