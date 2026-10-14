@@ -27,6 +27,7 @@ fn is_piece(nd: &Node) -> bool {
 /// реза остаётся хотя бы пара узлов (лист не начинается огрызком).
 fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize) -> Option<usize> {
     let mut cut = None;
+    let mut first_valid = None;
     for j in 2..stop {
         if !matches!(
             items[j].kind,
@@ -38,11 +39,17 @@ fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize) -> Option<usi
         let Some(a) = res.anchors.get(j.wrapping_sub(1)) else {
             continue;
         };
+        if first_valid.is_none() {
+            first_valid = Some(j);
+        }
         if a.y <= limit {
             cut = Some(j);
         }
     }
-    cut
+    // Схема из высоких структур (do-while с проверкой ввода) может не
+    // иметь ни одного якоря под лимитом — тогда любой рез лучше целого
+    // переростка в тысячу пунктов: берём самый первый валидный.
+    cut.or(first_valid)
 }
 
 /// Не влезает в А4 -> части, соединённые кружками «А», «Б», ...
@@ -358,5 +365,42 @@ mod tests {
         let parts = split_scheme(nodes, &sizes, &st);
         assert!(!parts.is_empty());
         assert!(parts.iter().all(|p| !p.is_empty()));
+    }
+}
+
+// fallback-рез: тест ниже — bench построения частей лаб-схем,
+// выключен доoccasion нужды (печать через --nocapture).
+#[cfg(test)]
+mod dbg_parts {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn dbg_oap_lab1_parts() {
+        let st = Style::default();
+        let text = std::fs::read_to_string("corpus/oap-lab1.c").unwrap();
+        let opts = crate::pipeline::Options {
+            labels: "en".into(),
+            font: None,
+            lw: None,
+            no_split: false,
+        };
+        let funcs = crate::frontend::c::c_to_gvn_functions(&text, "en").unwrap();
+        let gvn: Vec<String> = funcs.into_iter().map(|(_, g)| g).collect();
+        let n = crate::frontend::gvn::parse(&gvn.join("\n"), &st, "en").unwrap();
+        let sizes = crate::layout::normalize(&n, &st);
+        let parts = split_scheme(n, &sizes, &st);
+        for (i, p) in parts.iter().enumerate() {
+            let l = crate::layout::layout(p, &sizes, &st);
+            let kinds: Vec<String> = p.iter().map(|nd| format!("{:?}", nd.kind)).collect();
+            let texts: Vec<String> = p
+                .iter()
+                .map(|nd| nd.text.chars().take(14).collect())
+                .collect();
+            println!(
+                "часть {i}: узлов {} bounds {:?} kinds {kinds:?} texts {texts:?}",
+                p.len(),
+                l.bounds
+            );
+        }
     }
 }
