@@ -214,63 +214,20 @@ pub extern "C" fn gostpadi_render_batch(
     }
     // вход без рисуемых операторов (пустой main, файл из одних
     // return/объявлений) — отказ фронтенда, а не ошибка разбора:
-    // сайт показывает его в «empty» с человеческим текстом. Раньше
-    // весь отказ шёл в «errors» и приезжал как «в коде нет ни одной
-    // функции с телом» + err-подсветка — после T7 (11.10.2026) пустых
-    // схем не бывает, и текст врёт. Разделяем по подстроке: пустой
-    // вход -> empty, всё остальное -> errors.
+    // сайт показывает его в «empty» с человеческим текстом. Разделяем
+    // по подстроке: пустой вход -> empty, всё остальное -> errors.
     let rendered = pipeline::render_batch(ok, &st);
-    let mut out = String::with_capacity(4096);
-    let mut files: Vec<String> = Vec::new();
-    for (name, pages) in rendered.iter() {
-        let mut f = String::from("{\"name\":");
-        f.push('"');
-        f.push_str(&json_escape(name));
-        f.push_str("\",\"sheets\":[");
-        for (k, p) in pages.iter().enumerate() {
-            if k > 0 {
-                f.push(',');
-            }
-            f.push('"');
-            f.push_str(&json_escape(p));
-            f.push('"');
-        }
-        f.push_str("]}");
-        files.push(f);
-    }
-    let mut errs: Vec<String> = Vec::new();
-    let mut empty: Vec<String> = Vec::new();
-    for (name, e) in &errors {
-        let item = format!(
-            "{{\"name\":\"{}\",\"msg\":\"{}\",\"line\":{},\"col\":{},\"src\":{}}}",
-            json_escape(name),
-            json_escape(&e.msg),
-            e.line.map_or("null".into(), |l| l.to_string()),
-            e.col.map_or("null".into(), |c| c.to_string()),
-            match &e.src {
-                Some(s) => format!("\"{}\"", json_escape(s)),
-                None => "null".to_string(),
-            }
-        );
-        if e.msg.contains("нет рисуемых операторов") {
+    let mut empty = Vec::new();
+    let mut errs = Vec::new();
+    for item in errors {
+        if item.1.msg.contains("нет рисуемых операторов") {
             empty.push(item);
         } else {
             errs.push(item);
         }
     }
-    out.push_str("{\"ok\":true,\"files\":[");
-    out.push_str(&files.join(","));
-    out.push_str("],\"empty\":[");
-    out.push_str(&empty.join(","));
-    out.push_str("],\"errors\":[");
-    out.push_str(&errs.join(","));
-    out.push_str("]}");
-    let boxed = out.into_bytes().into_boxed_slice();
-    let p = boxed.as_ptr() as *mut u8;
-    let n = boxed.len();
-    std::mem::forget(boxed);
-    unsafe { *out_len = n };
-    p
+    let out = pipeline::batch_json(&rendered, &empty, &errs);
+    leak(out, out_len)
 }
 
 /// Освобождение буфера из gostpadi_render/gostpadi_alloc.

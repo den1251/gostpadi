@@ -8,7 +8,8 @@ use crate::frontend::gvn::parse;
 use crate::generate::{fit_scale, render_svg_at, render_svg_tight};
 use crate::ir::Node;
 use crate::layout::{
-    layout, normalize, split_scheme, strip_markers, uniform_sizes, Edge, Label, Layout, Sizes,
+    crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok, split_scheme,
+    strip_markers, uniform_sizes, Edge, Label, Layout, Sizes,
 };
 use crate::style::Style;
 
@@ -35,6 +36,39 @@ impl Options {
 pub fn scheme_parts(path: &str) -> (&str, Option<&str>) {
     path.split_once('#')
         .map_or((path, None), |(a, b)| (a, Some(b)))
+}
+
+/// Проверка схем на инварианты ГОСТ-раскладки: линии под прямыми углами,
+/// без пересечений и обрывов, в «конец» — одна стрелка. Без рисования.
+/// Возвращает по схеме имя и «что не так» (Ok — всё чисто, с числом блоков).
+pub fn validate(
+    schemes: &[(String, Vec<Node>)],
+    st: &Style,
+) -> Vec<(String, Result<String, String>)> {
+    schemes
+        .iter()
+        .map(|(scheme, nodes)| {
+            let (inp, fun) = scheme_parts(scheme);
+            let name = match fun {
+                Some(f) => format!("{inp}#{f}"),
+                None => inp.to_string(),
+            };
+            let l = layout(nodes, &normalize(nodes, st), st);
+            let res = || {
+                crossings_ok(&l.shapes, &l.edges)
+                    .map_err(|e| format!("линии заходят на блоки: {e}"))?;
+                dangling_ok(&l).map_err(|e| format!("обрыв линии: {e}"))?;
+                if !overlaps_ok(&l.shapes) {
+                    return Err("фигуры перекрываются".to_string());
+                }
+                if !single_entry_ok(&l) {
+                    return Err("в «конец» входит не одна стрелка".to_string());
+                }
+                Ok(format!("ok: {} blocks", nodes.len()))
+            };
+            (name, res())
+        })
+        .collect()
 }
 
 /// Пачка входов (путь, текст, это C?) -> (путь, узлы).
@@ -228,6 +262,62 @@ pub fn render_text(text: &str, is_c: bool, opts: &Options) -> Result<Vec<String>
         Ok(schemes) => Ok(render_batch(schemes, &opts.style()).remove(0).1),
         Err((_, e)) => Err(e),
     }
+}
+
+/// JSON-ответ пачки: страницы каждой схемы + два вида отказов
+/// («empty» для входа без рисуемых операторов, «errors» для прочего).
+/// Одна форма для wasm и serve — у протокола один словарь, расходятся
+/// только HTTP-статусы.
+pub fn batch_json(
+    files: &[(String, Vec<String>)],
+    empty: &[(String, ParseError)],
+    errors: &[(String, ParseError)],
+) -> String {
+    fn esc(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+    let file = |(name, pages): &(String, Vec<String>)| {
+        let sheets = pages
+            .iter()
+            .map(|p| format!("\"{}\"", esc(p)))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{{\"name\":\"{}\",\"sheets\":[{sheets}]}}", esc(name))
+    };
+    let err_item = |(name, e): &(String, ParseError)| {
+        format!(
+            "{{\"name\":\"{}\",\"msg\":\"{}\",\"line\":{},\"col\":{},\"src\":{}}}",
+            esc(name),
+            esc(&e.msg),
+            e.line.map_or("null".into(), |l| l.to_string()),
+            e.col.map_or("null".into(), |c| c.to_string()),
+            match &e.src {
+                Some(s) => format!("\"{}\"", esc(s)),
+                None => "null".to_string(),
+            }
+        )
+    };
+    let empty: Vec<String> = empty.iter().map(err_item).collect();
+    let errs: Vec<String> = errors.iter().map(err_item).collect();
+    let files: Vec<String> = files.iter().map(file).collect();
+    format!(
+        "{{\"ok\":true,\"files\":[{}],\"empty\":[{}],\"errors\":[{}]}}",
+        files.join(","),
+        empty.join(","),
+        errs.join(",")
+    )
 }
 
 #[cfg(test)]

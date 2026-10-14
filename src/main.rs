@@ -9,6 +9,8 @@ use gostpadi::layout::{
 };
 use gostpadi::pipeline::{self, Options};
 
+mod serve;
+
 use std::io::Write;
 
 /// stdout с тихим выходом при оборванной трубе («gostpadi ... | head»):
@@ -46,6 +48,7 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
 
 ИСПОЛЬЗОВАНИЕ:
     gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [флаги]
+    gostpadi serve [--port=8787]   локальный HTTP-дверь для агентов
 
 ФЛАГИ:
     -o <путь>       выход: файл.svg (один вход) или папка/ (пачка)
@@ -61,6 +64,11 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
     --template      заготовка .gvn на stdout
     -h, --help      эта справка
     -V, --version   версия
+
+    gostpadi serve [--port=N]
+        локальный сервер (только 127.0.0.1) с JSON-дверью движка:
+        POST /render — код -> страницы SVG, POST /lint — проверка,
+        POST /export?mode=1|2 — SVG в мм / draw.io; ?lang=c|gvn.
 ";
 
 const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
@@ -167,6 +175,8 @@ fn main() {
     let mut drawio = false;
     let mut check = false;
     let mut template = false;
+    let mut serve_mode = false;
+    let mut port = 8787u16;
 
     let mut i = 1;
     while i < argv.len() {
@@ -185,6 +195,13 @@ fn main() {
             "--no-split" => no_split = true,
             "--trim" => trim = true,
             "--drawio" => drawio = true,
+            "serve" if inputs.is_empty() => serve_mode = true,
+            _ if a.starts_with("--port=") => {
+                port = a["--port=".len()..].parse().unwrap_or_else(|_| {
+                    eprintln!("{a}: порт должен быть числом 1..65535");
+                    process::exit(2);
+                });
+            }
             "-o" | "--output" => {
                 i += 1;
                 if i >= argv.len() {
@@ -220,6 +237,14 @@ fn main() {
     if template {
         out(TEMPLATE);
         process::exit(0);
+    }
+    if serve_mode {
+        if port == 0 {
+            eprintln!("serve: порт 0 запрещён");
+            process::exit(2);
+        }
+        serve::serve(port);
+        return;
     }
     if inputs.is_empty() {
         eprintln!("{USAGE}");
