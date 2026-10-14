@@ -119,28 +119,23 @@ h1 em{font-style:normal;color:var(--accent)}
 }
 
 
-/* ---------- песочница в hero ---------- */
-.bench{display:flex;flex-direction:column;gap:.55rem}
-.bench-head{display:flex;align-items:center;gap:.5rem;font:500 13px var(--mono);color:var(--muted)}
-.bench-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
-.bench-dot.wait{background:#c9a11e}
-.bench textarea{width:100%;min-height:150px;resize:vertical;box-sizing:border-box;
-  font:12.5px/1.5 var(--mono);color:#201d1d;background:var(--paper);
-  border:1px solid var(--line2);border-radius:var(--r);padding:.6rem .7rem;
-  white-space:pre;overflow:auto;outline:none}
-.bench textarea:focus{border-color:var(--accent)}
-.chips{display:flex;gap:.35rem;flex-wrap:wrap}
-.chip{font:500 12px var(--mono);color:var(--muted);background:transparent;
-  border:1px solid var(--line);border-radius:var(--r);padding:.3rem .55rem;cursor:pointer;
-  transition:background-color .18s ease,color .18s ease,border-color .18s ease}
-.chip:hover{color:var(--ink);border-color:var(--line2)}
-.chip.on{color:var(--accent-ink);background:var(--accent);border-color:var(--accent)}
-.bench-run{align-self:flex-start;font:600 13px var(--mono);color:var(--bg);background:var(--ink);
-  border:1px solid var(--ink);border-radius:var(--r);padding:.55rem .95rem;cursor:pointer;
-  transition:background-color .18s ease,border-color .18s ease,color .18s ease}
-.bench-run:hover{background:var(--ink-hover,#3a3636);border-color:var(--ink-hover,#3a3636)}
-.bench-run:disabled{opacity:.45;cursor:wait}
-.sheet svg{max-width:100%}
+
+/* ---------- стопка схем в hero ---------- */
+.stack{position:relative;width:320px;height:300px;margin:0 auto}
+.paper{position:absolute;left:0;top:0;width:100%;background:var(--paper);
+  border:1px solid var(--line2);border-radius:var(--r);padding:.75rem .6rem;
+  transition:transform .3s ease}
+.paper svg{display:block;width:100%;max-height:150px;height:auto;background:var(--paper)}
+.paper.p1{transform:rotate(-2.2deg);animation-delay:.05s;z-index:3}
+.paper.p2{transform:rotate(1.4deg) translateY(34px);animation-delay:.13s;z-index:2}
+.paper.p3{transform:rotate(3.2deg) translateY(68px);animation-delay:.21s;z-index:1}
+.paper{animation:drop .5s ease backwards}
+.stack:hover .p1{transform:rotate(-3.2deg) translateY(-6px)}
+.stack:hover .p2{transform:rotate(.4deg) translateY(26px)}
+.stack:hover .p3{transform:rotate(4.6deg) translateY(76px)}
+@keyframes drop{from{opacity:0;transform:translateY(14px) rotate(0deg)}}
+@media (prefers-reduced-motion: reduce){.paper{animation:none;transition:none}}
+@media (max-width:900px){.stack{height:270px;max-width:280px}}
 
 /* ---------- факты ---------- */
 .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
@@ -244,28 +239,25 @@ footer a:hover{color:var(--ink)}
       </div>
       <p class="note">Движок на Rust. Лицензия <b>MIT</b>.</p>
     </div>
-    <div class="bench">
-      <div class="bench-head"><span class="bench-dot" id="bench-dot"></span><span id="bench-status">загружаю движок…</span></div>
-      <textarea id="bench-code" spellcheck="false">int main(void) {
-    int x;
-    if (scanf("%d", &x) != 1) {
-        printf("ошибка ввода\n");
-        return 1;
-    }
-    if (x > 0) {
-        printf("positive\n");
-    } else {
-        printf("non-positive\n");
-    }
-    return 0;
-}</textarea>
-      <div class="chips">
-        <button class="chip on" type="button" data-preset="if">ветвление</button>
-        <button class="chip" type="button" data-preset="loop">цикл</button>
-        <button class="chip" type="button" data-preset="sw">switch</button>
-      </div>
-      <button class="bench-run" id="bench-run" type="button" disabled>нарисовать схему</button>
-      <div class="sheet" id="bench-out"></div>
+    <div class="stack" id="hero-stack" aria-hidden="true">
+      <div class="paper p1"><svg xmlns="http://www.w3.org/2000/svg" width="273.733pt" height="210.161pt" viewBox="0 0 273.733 210.161">
+<rect x="0" y="0" width="273.733" height="210.161" fill="#ffffff"/>
+<g transform="translate(136.867 -9.839) scale(0.345)"><polyline points="0,85.02 0,127.53" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 120.984 L 0 127.53 M -2.711 120.984 L 0 127.53" fill="none" stroke="black" stroke-width="1"/><polyline points="0,184.21 0,226.72" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 220.174 L 0 226.72 M -2.711 220.174 L 0 226.72" fill="none" stroke="black" stroke-width="1"/><polyline points="-127.53,318.825 -269.23,318.825 -269.23,453.44" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M -266.519 446.894 L -269.23 453.44 M -271.941 446.894 L -269.23 453.44" fill="none" stroke="black" stroke-width="1"/><polyline points="127.53,318.825 269.23,318.825 269.23,453.44" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 271.941 446.894 L 269.23 453.44 M 266.519 446.894 L 269.23 453.44" fill="none" stroke="black" stroke-width="1"/><polyline points="-269.23,510.12 -269.23,538.46" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="269.23,510.12 269.23,538.46" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="-269.23,538.46 269.23,538.46" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="0,538.46 0,580.97" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 574.424 L 0 580.97 M -2.711 574.424 L 0 580.97" fill="none" stroke="black" stroke-width="1"/><rect x="-42.51" y="42.51" width="85.02" height="42.51" rx="21.255" ry="21.255" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="63.765" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">Start</tspan></text><polygon points="-98.173,127.53 113.36,127.53 98.173,184.21 -113.36,184.21" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="155.87" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">scanf("%d", &amp;x)</tspan></text><polygon points="-127.53,318.825 0,226.72 127.53,318.825 0,410.93" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="318.825" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">if (x &gt; 0)</tspan></text><polygon points="-367.403,453.44 -155.87,453.44 -171.057,510.12 -382.59,510.12" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="-269.23" y="481.78" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="-269.23" dy="0">printf("positive")</tspan></text><polygon points="171.057,453.44 382.59,453.44 367.403,510.12 155.87,510.12" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="269.23" y="481.78" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="269.23" dy="0">printf("non-positive")</tspan></text><rect x="-42.51" y="580.97" width="85.02" height="42.51" rx="21.255" ry="21.255" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="602.225" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">End</tspan></text><text x="-155.87" y="306.825" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central">yes</text><text x="155.87" y="306.825" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central">no</text></g>
+</svg></div>
+      <div class="paper p2"><svg xmlns="http://www.w3.org/2000/svg" width="198.017pt" height="210.161pt" viewBox="0 0 198.017 210.161">
+<rect x="0" y="0" width="198.017" height="210.161" fill="#ffffff"/>
+<g transform="translate(136.867 -9.839) scale(0.345)"><polyline points="0,85.02 0,127.53" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 120.984 L 0 127.53 M -2.711 120.984 L 0 127.53" fill="none" stroke="black" stroke-width="1"/><polyline points="0,184.21 0,226.72" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 220.174 L 0 226.72 M -2.711 220.174 L 0 226.72" fill="none" stroke="black" stroke-width="1"/><polyline points="-127.53,318.825 -269.23,318.825 -269.23,453.44" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M -266.519 446.894 L -269.23 453.44 M -271.941 446.894 L -269.23 453.44" fill="none" stroke="black" stroke-width="1"/><polyline points="-269.23,510.12 -269.23,538.46 0,538.46" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="127.53,318.825 155.87,318.825 155.87,538.46 0,538.46" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="0,538.46 0,580.97" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 574.424 L 0 580.97 M -2.711 574.424 L 0 580.97" fill="none" stroke="black" stroke-width="1"/><rect x="-42.51" y="42.51" width="85.02" height="42.51" rx="21.255" ry="21.255" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="63.765" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">Start</tspan></text><polygon points="-98.173,127.53 113.36,127.53 98.173,184.21 -113.36,184.21" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="155.87" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="-9">scanf_s("%lf%c", &amp;radius,</tspan><tspan x="0" dy="18">&amp;ch, 1)</tspan></text><polygon points="-127.53,318.825 0,226.72 127.53,318.825 0,410.93" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="318.825" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">if (radius &gt; 0)</tspan></text><polygon points="-367.403,453.44 -155.87,453.44 -171.057,510.12 -382.59,510.12" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="-269.23" y="481.78" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="-269.23" dy="0">printf("P =...")</tspan></text><rect x="-42.51" y="580.97" width="85.02" height="42.51" rx="21.255" ry="21.255" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="602.225" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">End</tspan></text><text x="-155.87" y="306.825" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central">yes</text><text x="155.87" y="306.825" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central">no</text></g>
+</svg></div>
+      <div class="paper p3"><svg xmlns="http://www.w3.org/2000/svg" width="440pt" height="312.855pt" viewBox="0 0 440 312.855">
+<rect x="0" y="0" width="440" height="312.855" fill="#ffffff"/>
+<g transform="translate(220 -9.839) scale(0.345)"><polyline points="0,70.85 0,113.36" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 106.814 L 0 113.36 M -2.711 106.814 L 0 113.36" fill="none" stroke="black" stroke-width="1"/><polyline points="-127.53,205.465 -269.23,205.465 -269.23,340.08" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M -266.519 333.534 L -269.23 340.08 M -271.941 333.534 L -269.23 340.08" fill="none" stroke="black" stroke-width="1"/><polyline points="-269.23,396.76 -269.23,439.27" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M -266.519 432.724 L -269.23 439.27 M -271.941 432.724 L -269.23 439.27" fill="none" stroke="black" stroke-width="1"/><polyline points="127.53,205.465 155.87,205.465 155.87,325.91 0,325.91" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="0,325.91 0,524.29" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 517.744 L 0 524.29 M -2.711 517.744 L 0 524.29" fill="none" stroke="black" stroke-width="1"/><polyline points="-510.12,708.5 510.12,708.5" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="-510.12,708.5 -510.12,751.01" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M -507.409 744.464 L -510.12 751.01 M -512.831 744.464 L -510.12 751.01" fill="none" stroke="black" stroke-width="1"/><polyline points="-269.23,708.5 -269.23,751.01" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M -266.519 744.464 L -269.23 751.01 M -271.941 744.464 L -269.23 751.01" fill="none" stroke="black" stroke-width="1"/><polyline points="269.23,708.5 269.23,751.01" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 271.941 744.464 L 269.23 751.01 M 266.519 744.464 L 269.23 751.01" fill="none" stroke="black" stroke-width="1"/><polyline points="510.12,708.5 510.12,751.01" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 512.831 744.464 L 510.12 751.01 M 507.409 744.464 L 510.12 751.01" fill="none" stroke="black" stroke-width="1"/><polyline points="-510.12,807.69 -510.12,836.03" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="-269.23,807.69 -269.23,836.03" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="269.23,807.69 269.23,836.03" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="510.12,807.69 510.12,836.03" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="-510.12,836.03 510.12,836.03" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><polyline points="0,836.03 0,878.54" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter"/><path d="M 2.711 871.994 L 0 878.54 M -2.711 871.994 L 0 878.54" fill="none" stroke="black" stroke-width="1"/><circle cx="0" cy="56.68" r="14.17" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="56.68" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">А</tspan></text><polygon points="-127.53,205.465 0,113.36 127.53,205.465 0,297.57" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="205.465" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="-18">if (scanf(...) != 1</tspan><tspan x="0" dy="18">|| month &lt; 1 || month</tspan><tspan x="0" dy="18">&gt; 12)</tspan></text><polygon points="-367.403,340.08 -155.87,340.08 -171.057,396.76 -382.59,396.76" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="-269.23" y="368.42" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="-269.23" dy="0">printf("Oshibka vvoda
+")</tspan></text><rect x="-318.825" y="439.27" width="99.19" height="42.51" rx="21.255" ry="21.255" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="-269.23" y="460.525" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="-269.23" dy="0">return 1</tspan></text><polygon points="-127.53,616.395 0,524.29 127.53,616.395 0,708.5" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="616.395" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">switch (month / 3)</tspan></text><polygon points="-608.293,751.01 -396.76,751.01 -411.947,807.69 -623.48,807.69" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="-510.12" y="779.35" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="-510.12" dy="0">printf("Vesna
+")</tspan></text><polygon points="-367.403,751.01 -155.87,751.01 -171.057,807.69 -382.59,807.69" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="-269.23" y="779.35" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="-269.23" dy="0">printf("Leto
+")</tspan></text><polygon points="171.057,751.01 382.59,751.01 367.403,807.69 155.87,807.69" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="269.23" y="779.35" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="269.23" dy="0">printf("Osen
+")</tspan></text><polygon points="411.947,751.01 623.48,751.01 608.293,807.69 396.76,807.69" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="510.12" y="779.35" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="510.12" dy="0">printf("Zima
+")</tspan></text><rect x="-42.51" y="878.54" width="85.02" height="42.51" rx="21.255" ry="21.255" fill="white" stroke="black" stroke-width="1" stroke-linejoin="miter"/><text x="0" y="899.795" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central"><tspan x="0" dy="0">End</tspan></text><text x="-155.87" y="193.465" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central">yes</text><text x="155.87" y="193.465" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="middle" dominant-baseline="central">no</text><text x="-524.12" y="739.01" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="end" dominant-baseline="central">month / 3 = 1</text><text x="-283.23" y="739.01" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="end" dominant-baseline="central">month / 3 = 2</text><text x="283.23" y="739.01" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="start" dominant-baseline="central">month / 3 = 3</text><text x="524.12" y="739.01" font-family="DejaVu Sans Mono, monospace" font-size="12" font-weight="normal" text-anchor="start" dominant-baseline="central">default</text></g>
+</svg></div>
+    </div>
     </div>
   </div>
 
@@ -412,75 +404,6 @@ footer a:hover{color:var(--ink)}
   document.getElementById('theme').addEventListener('click', function(){
     apply(CY[document.documentElement.dataset.theme] || 'auto');
   });
-})();
-
-/* ============================== песочница hero ============================== */
-(function () {
-  var presets = {
-    if: ['int main(void) {\n    int x;\n    if (scanf("%d", &x) != 1) {\n        printf("ошибка ввода\\n");\n        return 1;\n    }\n    if (x > 0) {\n        printf("пос\\n"); }\n    else {\n        printf("отриц.\\n"); }\n    return 0;\n}',
-    ],
-    loop: ['int main(void) {\n    int n;\n    if (scanf("%d", &n) != 1 || n < 1) {\n        printf("нужен n >= 1\\n");\n        return 1;\n    }\n    int s = 0;\n    for (int i = 1; i <= n; i++) {\n        s = s + i;\n    }\n    printf("сумма = %d\\n", s);\n    return 0;\n}'],
-    sw: ['int main(void) {\n    int m;\n    if (scanf("%d", &m) != 1 || m < 1 || m > 12) {\n        printf("номер месяца 1..12\\n");\n        return 1;\n    }\n    switch (m / 3) {\n        case 1: printf("весна\\n"); break;\n        case 2: printf("лето\\n"); break;\n        case 3: printf("осень\\n"); break;\n        default: printf("зима\\n"); break;\n    }\n    return 0;\n}'],
-  };
-  var wasm = null, busy = false;
-  var $ = (id) => document.getElementById(id);
-  function setDot(ok, text) {
-    $('bench-dot').className = 'bench-dot' + (ok ? '' : ' wait');
-    $('bench-status').textContent = text;
-  }
-  function load() {
-    fetch('gostpadi.wasm')
-      .then((r) => { if (!r.ok) throw 0; return r.arrayBuffer(); })
-      .then((b) => WebAssembly.instantiate(b, {}))
-      .then(({ instance }) => { wasm = instance.exports; setDot(true, 'движок готов — рисую…'); $('bench-run').disabled = false; run(); })
-      .catch(() => setDot(false, 'движок не загрузился — откройте приложение'));
-  }
-  function pack(name, text) {
-    const enc = new TextEncoder();
-    const n = enc.encode(name), t = enc.encode(text);
-    const parts = [
-      new Uint8Array(new Uint32Array([1]).buffer),
-      new Uint8Array(new Uint32Array([n.length]).buffer), n,
-      new Uint8Array([1]),
-      new Uint8Array(new Uint32Array([t.length]).buffer), t,
-    ];
-    const all = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
-    let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
-    return all;
-  }
-  function render() {
-    const text = $('bench-code').value;
-    const ip = wasm.gostpadi_alloc(4);
-    const bytes = pack('черновик.c', text);
-    const p = wasm.gostpadi_alloc(bytes.length);
-    new Uint8Array(wasm.memory.buffer, p, bytes.length).set(bytes);
-    const r = wasm.gostpadi_render_batch(p, bytes.length, 1, 0, 0, ip);
-    const n = new DataView(wasm.memory.buffer).getUint32(ip, true);
-    if (!r || !n) { setDot(true, 'движок не ответил'); return; }
-    const json = JSON.parse(new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, r, n)));
-    wasm.gostpadi_free(p, bytes.length); wasm.gostpadi_free(r, n); wasm.gostpadi_free(ip, 4);
-    const page = (json.files || [])[0];
-    const svg = page && page.sheets && page.sheets[0];
-    if (svg) {
-      $('bench-out').innerHTML = svg;
-      setDot(true, 'готово');
-    } else {
-      setDot(true, 'схема пустая — добавьте операторов');
-    }
-  }
-  function run() {
-    if (!wasm || busy) return;
-    busy = true; $('bench-run').disabled = true; setDot(false, 'рисую…');
-    requestAnimationFrame(() => { try { render(); } catch (e) { setDot(true, 'ошибка: ' + e.message); } busy = false; $('bench-run').disabled = false; });
-  }
-  document.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
-    document.querySelectorAll('.chip').forEach((x) => x.classList.remove('on'));
-    c.classList.add('on');
-    $('bench-code').value = presets[c.dataset.preset][0];
-    run();
-  }));
-  $('bench-run').addEventListener('click', run);
-  addEventListener('load', load);
 })();
 
 (function(){
