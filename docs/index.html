@@ -22,7 +22,7 @@
   /* Дуэт «ман-страницы»: крем-бумага по системе, тёмный чернильный по кнопке. */
   html[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #161313; --bg2: #201d1d; --bg3: #2a2626;
+    --bg: #161313; --bg2: #201d1d; --bg3: #2a2626; --ink-hover: #e2e0df;
     --line: rgba(253, 252, 252, .14); --line2: rgba(253, 252, 252, .3);
     --ink: #fdfcfc; --muted: #9a9898; --faint: #6e6b6b;
     --accent: #4da3ff; --accent-ink: #201d1d; --accent-soft: rgba(77, 163, 255, .14);
@@ -31,7 +31,7 @@
   }
   html[data-theme="light"] {
     color-scheme: light;
-    --bg: #fdfcfc; --bg2: #f8f7f7; --bg3: #edebe9;
+    --bg: #fdfcfc; --bg2: #f8f7f7; --bg3: #edebe9; --ink-hover: #3a3636;
     --line: rgba(15, 0, 0, .12); --line2: rgba(15, 0, 0, .3);
     --ink: #201d1d; --muted: #646262; --faint: #9a9898;
     --accent: #007aff; --accent-ink: #fdfcfc; --accent-soft: rgba(0, 122, 255, .09);
@@ -41,7 +41,7 @@
   @media (prefers-color-scheme: light) {
     html[data-theme="auto"] {
       color-scheme: light;
-      --bg: #fdfcfc; --bg2: #f8f7f7; --bg3: #edebe9;
+      --bg: #fdfcfc; --bg2: #f8f7f7; --bg3: #edebe9; --ink-hover: #3a3636;
       --line: rgba(15, 0, 0, .12); --line2: rgba(15, 0, 0, .3);
       --ink: #201d1d; --muted: #646262; --faint: #9a9898;
       --accent: #007aff; --accent-ink: #fdfcfc; --accent-soft: rgba(0, 122, 255, .09);
@@ -52,7 +52,7 @@
   @media (prefers-color-scheme: dark) {
     html[data-theme="auto"] {
       color-scheme: dark;
-      --bg: #161313; --bg2: #201d1d; --bg3: #2a2626;
+      --bg: #161313; --bg2: #201d1d; --bg3: #2a2626; --ink-hover: #e2e0df;
       --line: rgba(253, 252, 252, .14); --line2: rgba(253, 252, 252, .3);
       --ink: #fdfcfc; --muted: #9a9898; --faint: #6e6b6b;
       --accent: #4da3ff; --accent-ink: #201d1d; --accent-soft: rgba(77, 163, 255, .14);
@@ -97,7 +97,7 @@ h1 em{font-style:normal;color:var(--accent)}
   border-radius:var(--r);font:500 14px var(--mono);border:1px solid transparent;
   transition:background-color .18s ease,border-color .18s ease,color .18s ease}
 .btn-p{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.btn-p:hover{background:color-mix(in srgb,var(--ink) 86%,var(--bg2) 14%);border-color:color-mix(in srgb,var(--ink) 86%,var(--bg2) 14%)}
+.btn-p:hover{background:var(--ink-hover,#3a3636);border-color:var(--ink-hover,#3a3636)}
 .btn-g{border-color:var(--line);background:transparent;color:var(--muted)}
 .btn-g:hover{background:var(--bg3);border-color:var(--line2);color:var(--ink)}
 .note{margin:1.8rem 0 0;font:13px var(--mono);color:var(--faint)}
