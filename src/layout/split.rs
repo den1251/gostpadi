@@ -368,33 +368,69 @@ mod tests {
     }
 }
 
-// fallback-рез: тест ниже — bench построения частей лаб-схем,
-// выключен доoccasion нужды (печать через --nocapture).
+// Диагностика разрезов по corpus-файлу: печать частей (kinds/texts/bounds)
+// с --ignored --nocapture, числа фиксируются до правок порогов.
 #[cfg(test)]
 mod dbg_parts {
     use super::*;
+
+    fn dbg_file(path: &str) {
+        let st = Style::default();
+        let text = std::fs::read_to_string(path).unwrap();
+        let funcs = crate::frontend::c::c_to_gvn_functions(&text, "en").unwrap();
+        let schemes: Vec<(String, Vec<Node>)> = funcs
+            .into_iter()
+            .map(|(name, gvn)| {
+                let n = crate::frontend::gvn::parse(&gvn, &st, "en").unwrap();
+                (name, n)
+            })
+            .collect();
+        let sizes = crate::layout::uniform_sizes(
+            &schemes
+                .iter()
+                .map(|(_, n)| crate::layout::normalize(n, &st))
+                .collect::<Vec<_>>(),
+        );
+        let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
+        println!("{path}: бюджет части {budget:.0}");
+        for (name, nodes) in schemes {
+            let parts = split_scheme(nodes, &sizes, &st);
+            println!("схема {name}: частей {}", parts.len());
+            for (i, p) in parts.iter().enumerate() {
+                let l = crate::layout::layout(p, &sizes, &st);
+                let kinds: Vec<String> = p.iter().map(|nd| format!("{:?}", nd.kind)).collect();
+                let texts: Vec<String> = p
+                    .iter()
+                    .map(|nd| nd.text.chars().take(18).collect())
+                    .collect();
+                let anchors: Vec<i64> = l.anchors.iter().map(|a| a.y as i64).collect();
+                println!(
+                    "  часть {i}: узлов {} h {:.0} scale {:.3} kinds {kinds:?}\n    texts {texts:?}\n    anchors {anchors:?}",
+                    p.len(),
+                    l.bounds.3,
+                    (st.a4_h - 2.0 * st.page_pad) / l.bounds.3.max(1.0),
+                );
+                if l.bounds.3 > budget {
+                    for sh in &l.shapes {
+                        println!(
+                            "    фигура {} ({:.0},{:.0}) {:.0}x{:.0} {:?}",
+                            sh.kind, sh.cx, sh.cy, sh.w, sh.h, sh.lines
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore]
-    fn dbg_oap_lab1_parts() {
-        let st = Style::default();
-        let text = std::fs::read_to_string("corpus/oap-lab1.c").unwrap();
-        let funcs = crate::frontend::c::c_to_gvn_functions(&text, "en").unwrap();
-        let gvn: Vec<String> = funcs.into_iter().map(|(_, g)| g).collect();
-        let n = crate::frontend::gvn::parse(&gvn.join("\n"), &st, "en").unwrap();
-        let sizes = crate::layout::normalize(&n, &st);
-        let parts = split_scheme(n, &sizes, &st);
-        for (i, p) in parts.iter().enumerate() {
-            let l = crate::layout::layout(p, &sizes, &st);
-            let kinds: Vec<String> = p.iter().map(|nd| format!("{:?}", nd.kind)).collect();
-            let texts: Vec<String> = p
-                .iter()
-                .map(|nd| nd.text.chars().take(14).collect())
-                .collect();
-            println!(
-                "часть {i}: узлов {} bounds {:?} kinds {kinds:?} texts {texts:?}",
-                p.len(),
-                l.bounds
-            );
-        }
+    fn dbg_parts_lab1() {
+        dbg_file("corpus/oap-lab1.c");
+    }
+
+    #[test]
+    #[ignore]
+    fn dbg_parts_lab4() {
+        dbg_file("corpus/oap-lab4.c");
     }
 }
