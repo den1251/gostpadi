@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-theme="dark">
+<html lang="ru" data-theme="auto">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,51 +11,74 @@
 <meta property="og:url" content="https://sehaxe.github.io/gostpadi/">
 <meta property="og:image" content="https://sehaxe.github.io/gostpadi/og.png">
 <meta property="og:locale" content="ru_RU">
-<meta name="theme-color" content="#0f1211">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2ee">
+<meta name="theme-color" content="#201d1d">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#fdfcfc">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='9' y='2' width='14' height='8' rx='4' fill='none' stroke='%23aab0ff' stroke-width='2.4'/%3E%3Cpath d='M16 10v4M16 14l8 8-8 8-8-8z' fill='none' stroke='%23aab0ff' stroke-width='2.4'/%3E%3C/svg%3E">
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark; --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  /* Дуэт база-облига: светлая «ман-страница» (крем + чернила) и
+     тёмная, инверсная. Стол схем — единственная инверсная зона:
+     на светлой это чернила (#201d1d), на тёмной почти чёрный (#0f0a0a). */
   html[data-theme="dark"] {
-    --bg: #09090b; --bg2: #101014; --panel: #131318; --panel2: #1a1a20;
-    --line: #232327; --line2: #2e2e34;
-    --ink: #fafafa; --muted: #a1a1aa; --faint: #71717a;
-    --accent: #aab0ff; --accent-ink: #0b0b12; --accent-dim: #8b93f4;
-    --accent-soft: rgba(170, 176, 255, .12);
-    --err: #ff8a8b; --err-bg: #2a1719; --err-line: #7a3a3c;
-    --paper: #fbfbf9; --paper-line: #d8d8d2;
-    --shadow: 0 1px 3px rgba(0,0,0,.4);
-    --chip: #202824; --chip-line: #2c3731;
+    color-scheme: dark;
+    --bg: #201d1d; --bg2: #302c2c; --panel: #252222; --panel2: #302c2c;
+    --line: rgba(253, 252, 252, .14); --line2: rgba(253, 252, 252, .3);
+    --ink: #fdfcfc; --muted: #9a9898; --faint: #6e6b6b;
+    --accent: #4da3ff; --accent-ink: #201d1d; --accent-dim: #2f83d1;
+    --accent-soft: rgba(77, 163, 255, .14);
+    --err: #ff6b60; --err-bg: rgba(255, 107, 96, .12); --err-line: rgba(255, 107, 96, .4);
+    --ok: #30d158;
+    --paper: #fbfbf9; --paper-line: rgba(15, 0, 0, .25);
+    --stage: #0f0a0a; --stage-line: rgba(253, 252, 252, .18);
   }
   html[data-theme="light"] {
-    --bg: #fafafa; --bg2: #f4f4f5; --panel: #ffffff; --panel2: #f9f9fa;
-    --line: #e4e4e7; --line2: #d4d4d8;
-    --ink: #18181b; --muted: #52525b; --faint: #a1a1aa;
-    --accent: #4f5ac9; --accent-ink: #ffffff; --accent-dim: #3d46ad;
-    --accent-soft: rgba(79, 90, 201, .1);
-    --err: #b3261e; --err-bg: #fdeceb; --err-line: #e4b3b0;
-    --paper: #ffffff; --paper-line: #d8d8d2;
-    --shadow: 0 1px 3px rgba(0,0,0,.08);
-    --chip: #f2f4f0; --chip-line: #d6dcd4;
+    color-scheme: light;
+    --bg: #fdfcfc; --bg2: #f8f7f7; --panel: #fdfcfc; --panel2: #f8f7f7;
+    --line: rgba(15, 0, 0, .12); --line2: rgba(15, 0, 0, .3);
+    --ink: #201d1d; --muted: #646262; --faint: #9a9898;
+    --accent: #007aff; --accent-ink: #fdfcfc; --accent-dim: #0056b3;
+    --accent-soft: rgba(0, 122, 255, .09);
+    --err: #d70015; --err-bg: rgba(215, 0, 21, .06); --err-line: rgba(215, 0, 21, .35);
+    --ok: #30d158;
+    --paper: #fbfbf9; --paper-line: rgba(15, 0, 0, .2);
+    --stage: #201d1d; --stage-line: rgba(253, 252, 252, .25);
   }
   @media (prefers-color-scheme: light) {
     html[data-theme="auto"] {
-      --bg: #eef0ec; --bg2: #e7eae4; --panel: #ffffff; --panel2: #f6f7f4;
-      --line: #dde1db; --line2: #c9cfc6;
-      --ink: #1b201d; --muted: #5b665f; --faint: #8b958e;
-      --accent: #1f8a54; --accent-ink: #ffffff; --accent-dim: #17683f;
-      --accent-soft: rgba(31, 138, 84, .1);
-      --err: #b3261e; --err-bg: #fdeceb; --err-line: #e4b3b0;
-      --paper: #ffffff; --paper-line: #d8d8d2;
-      --shadow: 0 1px 3px rgba(0,0,0,.08);
-      --chip: #f2f4f0; --chip-line: #d6dcd4;
+      color-scheme: light;
+      --bg: #fdfcfc; --bg2: #f8f7f7; --panel: #fdfcfc; --panel2: #f8f7f7;
+      --line: rgba(15, 0, 0, .12); --line2: rgba(15, 0, 0, .3);
+      --ink: #201d1d; --muted: #646262; --faint: #9a9898;
+      --accent: #007aff; --accent-ink: #fdfcfc; --accent-dim: #0056b3;
+      --accent-soft: rgba(0, 122, 255, .09);
+      --err: #d70015; --err-bg: rgba(215, 0, 21, .06); --err-line: rgba(215, 0, 21, .35);
+      --ok: #30d158;
+      --paper: #fbfbf9; --paper-line: rgba(15, 0, 0, .2);
+      --stage: #201d1d; --stage-line: rgba(253, 252, 252, .25);
+    }
+  }
+  @media (prefers-color-scheme: dark) {
+    html[data-theme="auto"] {
+      color-scheme: dark;
+      --bg: #201d1d; --bg2: #302c2c; --panel: #252222; --panel2: #302c2c;
+      --line: rgba(253, 252, 252, .14); --line2: rgba(253, 252, 252, .3);
+      --ink: #fdfcfc; --muted: #9a9898; --faint: #6e6b6b;
+      --accent: #4da3ff; --accent-ink: #201d1d; --accent-dim: #2f83d1;
+      --accent-soft: rgba(77, 163, 255, .14);
+      --err: #ff6b60; --err-bg: rgba(255, 107, 96, .12); --err-line: rgba(255, 107, 96, .4);
+      --ok: #30d158;
+      --paper: #fbfbf9; --paper-line: rgba(15, 0, 0, .25);
+      --stage: #0f0a0a; --stage-line: rgba(253, 252, 252, .18);
     }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 14px/1.5 var(--mono);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     overflow: hidden;
   }
@@ -72,7 +95,7 @@
   /* вместо надписи — знак: терминатор, стрелка, ромб */
   .brand { display: flex; color: var(--accent); }
   .brand svg { width: 22px; height: 22px; display: block; }
-  .brand:hover { color: var(--fg); }
+  .brand:hover { color: var(--ink); }
   .top-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
   .top-actions a { color: var(--muted); text-decoration: none; font-size: 13px; }
   .top-actions a:hover { color: var(--ink); }
@@ -84,14 +107,14 @@
   }
   .pane {
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: 12px; display: flex; flex-direction: column;
+    display: flex; flex-direction: column;
     min-height: 0; min-width: 0; overflow: hidden;
   }
   .pane-title {
     display: flex; align-items: center; gap: 8px;
     padding: 9px 12px; border-bottom: 1px solid var(--line);
-    font-size: 11px; font-weight: 600; letter-spacing: .9px;
-    text-transform: uppercase; color: var(--muted);
+    font-size: 12.5px; font-weight: 500;
+    color: var(--muted);
     flex: none; min-height: 38px;
   }
   .pane-title .spacer { flex: 1; }
@@ -99,20 +122,20 @@
 
   /* ---------- файлы ---------- */
   #filelist { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
-  #filelist li { display: flex; align-items: center; border-radius: 8px; margin-bottom: 2px; }
+  #filelist li { display: flex; align-items: center; border-radius: 4px; margin-bottom: 2px; }
   #filelist li:hover { background: var(--panel2); }
   #filelist li.sel { background: var(--accent-soft); }
   #filelist li.sel .fname { color: var(--accent); }
   .fname {
     flex: 1; min-width: 0; border: 0; background: transparent; text-align: left;
-    padding: 7px 4px 7px 8px; border-radius: 8px 0 0 8px;
+    padding: 7px 4px 7px 8px; border-radius: 4px 0 0 4px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    font-family: var(--mono); font-size: 13px;
   }
   .fbadge { width: 7px; height: 7px; border-radius: 50%; background: var(--err); flex: none; }
   .fdel {
     border: 0; background: transparent; color: var(--faint); flex: none;
-    width: 22px; height: 26px; border-radius: 6px; font-size: 14px; line-height: 1;
+    width: 22px; height: 26px; border-radius: 4px; font-size: 14px; line-height: 1;
   }
   .fdel:hover { color: var(--err); background: var(--err-bg); }
   .side-actions { padding: 8px; border-top: 1px solid var(--line); flex: none; }
@@ -122,21 +145,21 @@
   #errbox { flex: none; display: none; }
   #errbox.show { display: block; }
   .errcard {
-    margin: 10px 10px 0; padding: 9px 12px; border-radius: 8px;
+    margin: 10px 10px 0; padding: 9px 12px; border-radius: 4px;
     background: var(--err-bg); border: 1px solid var(--err-line);
     color: var(--err); font-size: 13px;
   }
   .errcard b { display: block; margin-bottom: 4px; }
   .errcard pre {
-    margin: 4px 0 0; cursor: pointer; font: 12px/1.5 ui-monospace, Consolas, monospace;
+    margin: 4px 0 0; cursor: pointer; font: 12px/1.5 var(--mono);
     overflow-x: auto; color: var(--ink); background: var(--panel);
-    border-radius: 6px; padding: 6px 8px;
+    border-radius: 4px; padding: 6px 8px;
   }
   .errcard pre .bad { background: var(--err-bg); }
   #code {
     flex: 1; width: 100%; resize: none; border: 0; outline: none;
     background: transparent; color: var(--ink);
-    font: 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font: 13px/1.5 var(--mono);
     padding: 12px 14px; white-space: pre; overflow-wrap: normal;
   }
   .editor-tools {
@@ -151,43 +174,41 @@
   }
   .hint { color: var(--faint); font-size: 12px; margin-left: auto; }
   kbd {
-    font: 11px ui-monospace, Consolas, monospace; color: var(--muted);
-    border: 1px solid var(--line2); border-bottom-width: 2px;
-    border-radius: 5px; padding: 1px 5px; background: var(--panel2);
+    font: 11px var(--mono); color: var(--muted);
+    border: 1px solid var(--line2);
+    border-radius: 4px; padding: 1px 5px; background: transparent;
   }
 
   /* ---------- кнопки ---------- */
   .btn {
     border: 1px solid var(--line2); background: var(--panel2); color: var(--ink);
-    border-radius: 8px; padding: 6px 12px; font-size: 13px;
+    border-radius: 4px; padding: 6px 12px; font-size: 13px;
   }
-  .btn:hover { border-color: var(--accent); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-  .btn.primary:hover { filter: brightness(1.08); }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 500; }
+  .btn.primary:hover { background: var(--panel2); color: var(--ink); }
   .btn:disabled { opacity: .45; cursor: default; }
   .btn.icon { padding: 6px 9px; }
   .tools {
     display: flex; gap: 4px; align-items: center;
   }
-  .tools .btn { padding: 4px 8px; font-size: 12px; border-radius: 6px; }
+  .tools .btn { padding: 4px 8px; font-size: 12px; border-radius: 4px; }
 
   /* ---------- схема ---------- */
   #viewbar { flex-wrap: wrap; row-gap: 6px; }
   #tabs { display: flex; gap: 3px; }
   #tabs button {
-    border: 1px solid var(--line2); background: transparent; color: var(--muted);
-    border-radius: 6px; padding: 3px 9px; font-size: 12px;
+    border: 0; background: transparent; color: var(--muted);
+    border-radius: 0; border-bottom: 2px solid transparent;
+    padding: 3px 9px; font-size: 12px;
   }
   #tabs button[aria-current="true"] {
-    background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+    color: var(--ink); border-bottom-color: var(--faint);
   }
   #zoomval { min-width: 42px; text-align: center; font-size: 12px; color: var(--muted); }
   #viewport {
     flex: 1; min-height: 0; overflow: hidden; position: relative;
-    background:
-      linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%),
-      linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%);
-    background-size: 22px 22px; background-position: 0 0, 11px 11px;
+    background: var(--stage);
     cursor: grab;
   }
   #viewport.panning { cursor: grabbing; }
@@ -195,7 +216,7 @@
   #stage .sheet {
     position: absolute; background: var(--paper);
     border: 1px solid var(--paper-line); border-radius: 3px;
-    box-shadow: 0 2px 14px rgba(0,0,0,.35); overflow: hidden;
+    overflow: hidden;
   }
   #stage .sheet svg { display: block; }
   #stage .sheet .thumb {
@@ -225,7 +246,7 @@
     transition: opacity .18s ease;
   }
   #stage.collage .tile .sheet {
-    position: relative; box-shadow: 0 2px 10px rgba(0,0,0,.3);
+    position: relative;
     background: color-mix(in srgb, var(--paper) 82%, transparent);
   }
   #stage.collage .tile .cap {
@@ -248,9 +269,9 @@
   }
   #pager.show { display: flex; }
   #pager button {
-    pointer-events: auto; width: 34px; height: 34px; border-radius: 50%;
-    border: 1px solid var(--paper-line); background: rgba(20,22,28,.62);
-    color: var(--ink); font-size: 18px; line-height: 1; cursor: pointer;
+    pointer-events: auto; width: 34px; height: 34px; border-radius: 4px;
+    border: 1px solid var(--stage-line); background: rgba(15, 0, 0, .72);
+    color: #fdfcfc; font-size: 18px; line-height: 1; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
   #pager button:disabled { opacity: .28; cursor: default; }
@@ -259,26 +280,27 @@
      на нём не видны (полупрозрачный белый по белому) */
   #dots {
     display: flex; gap: 7px; pointer-events: auto;
-    background: rgba(16,18,24,.82); border: 1px solid var(--line);
-    border-radius: 999px; padding: 7px 11px;
+    background: rgba(15, 0, 0, .82); border: 1px solid var(--stage-line);
+    border-radius: 4px; padding: 7px 11px;
   }
   #dots i {
     width: 8px; height: 8px; border-radius: 50%; cursor: pointer;
-    background: rgba(255,255,255,.45); border: 0; padding: 0; display: block;
+    background: rgba(253, 252, 252, .45); border: 0; padding: 0; display: block;
   }
-  #dots i:hover { background: rgba(255,255,255,.75); }
-  #dots i[aria-current="true"] { background: var(--accent); width: 18px; border-radius: 4px; }
+  #dots i:hover { background: rgba(253, 252, 252, .75); }
+  #dots i[aria-current="true"] { background: var(--accent); width: 18px; border-radius: 2px; }
   #dots i:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #placeholder[hidden] { display: none; }
   #placeholder {
     position: absolute; inset: 0; display: flex; align-items: center;
-    justify-content: center; text-align: center; color: var(--muted);
+    justify-content: center; text-align: center;
+    color: rgba(253, 252, 252, .55);
     padding: 20px; pointer-events: none;
   }
   /* ---------- полный просмотр схемы ---------- */
   #zoomcard{position:absolute;right:10px;bottom:10px;z-index:4;
-    background:rgba(16,18,24,.82);border-color:var(--line)}
-  #zoomcard:hover{background:rgba(28,31,40,.95)}
+    background:rgba(15,0,0,.82);border-color:var(--stage-line);color:#fdfcfc}
+  #zoomcard:hover{background:rgba(15,0,0,.95)}
   /* position:fixed ломается внутри трансформированного предка, поэтому
      лайтбокс живёт прямо в body и перекрывает страницу слоем */
   #lightbox{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
@@ -287,30 +309,27 @@
   @keyframes lb-in{from{opacity:.3}}
   .lbbar{flex:none;display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;
     border-bottom:1px solid var(--line);background:var(--bg)}
-  .lbtitle{font-size:14px;color:var(--fg2);max-width:40vw;overflow:hidden;
+  .lbtitle{font-size:14px;color:var(--muted);max-width:40vw;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
   #lbval{min-width:42px;text-align:center;font-size:12px;color:var(--muted)}
   #lbview{flex:1;min-height:0;position:relative;overflow:hidden;cursor:grab;touch-action:none;
-    background:
-      linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%),
-      linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%);
-    background-size:22px 22px;background-position:0 0,11px 11px}
+    background:var(--stage)}
   #lbstage{position:absolute;transform-origin:0 0;transition:transform .16s ease}
   /* во время жеста (палец, колесо) переход гасим — иначе плывёт */
   #lbstage.lb-live{transition:none}
   #lbpager{flex:none;display:flex;align-items:center;justify-content:center;gap:1rem;
     padding:.7rem 0 1.1rem}
   #lbpager[hidden]{display:none}
-  #lbthumbs{display:flex;gap:6px;align-items:center;background:rgba(16,18,24,.82);border:1px solid var(--line);
-    border-radius:999px;padding:7px 11px;max-width:min(62vw,560px);overflow-x:auto;scrollbar-width:none}
+  #lbthumbs{display:flex;gap:6px;align-items:center;background:rgba(15,0,0,.82);border:1px solid var(--stage-line);
+    border-radius:4px;padding:7px 11px;max-width:min(62vw,560px);overflow-x:auto;scrollbar-width:none}
   #lbthumbs::-webkit-scrollbar{display:none}
   .lbthumb{height:46px;flex:none;background:var(--paper);border:1px solid var(--paper-line);
     border-radius:3px;overflow:hidden;cursor:pointer;opacity:.72}
   .lbthumb svg{width:100%;height:100%;display:block}
   .lbthumb:hover{opacity:1}
   .lbthumb[aria-current="true"]{outline:2px solid var(--accent);outline-offset:1px;opacity:1}
-  #lbpager button{width:34px;height:34px;border-radius:50%;
-    border:1px solid var(--paper-line);background:rgba(20,22,28,.62);color:var(--fg);
+  #lbpager button{width:34px;height:34px;border-radius:4px;
+    border:1px solid var(--stage-line);background:rgba(15,0,0,.72);color:#fdfcfc;
     font-size:18px;line-height:1;cursor:pointer}
   #lbpager button:disabled{opacity:.28;cursor:default}
   #lbpager button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -332,22 +351,23 @@
   /* ---------- панели: десктоп — показ по флагам, мобильный — активный таб ---------- */
   .viewchips { display: flex; gap: 4px; }
   .viewchips button {
-    border: 1px solid var(--line2); background: transparent; color: var(--muted);
-    border-radius: 999px; padding: 3px 10px; font-size: 12px;
+    border: 0; background: transparent; color: var(--muted);
+    border-radius: 0; border-bottom: 2px solid transparent;
+    padding: 3px 10px; font-size: 12px;
   }
   .viewchips button[aria-pressed="true"] {
-    background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+    color: var(--ink); border-bottom-color: var(--faint);
   }
   .menu-wrap { position: relative; }
   .menu {
     position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
-    background: var(--panel2); border: 1px solid var(--line2); border-radius: 10px;
-    box-shadow: var(--shadow); padding: 4px; min-width: 170px;
+    background: var(--panel); border: 1px solid var(--line2); border-radius: 4px;
+    padding: 4px; min-width: 170px;
   }
   .menu[hidden] { display: none; }
   .menu button {
     display: block; width: 100%; text-align: left; border: 0; background: transparent;
-    color: var(--ink); border-radius: 7px; padding: 8px 10px; font-size: 13px;
+    color: var(--ink); border-radius: 4px; padding: 8px 10px; font-size: 13px;
   }
   .menu button:hover { background: var(--accent-soft); color: var(--accent); }
 
@@ -389,21 +409,22 @@
   }
   #dragover[hidden] { display: none; }
   #dragover > div {
-    border: 2px dashed var(--accent); border-radius: 14px; padding: 36px 52px;
+    border: 2px dashed var(--accent); border-radius: 4px; padding: 36px 52px;
     color: var(--ink); background: var(--panel); font-size: 16px;
   }
-  .skip { position: fixed; top: -48px; left: 12px; z-index: 60; background: var(--accent);
-          color: var(--accent-ink); padding: 7px 14px; border-radius: 8px; font-size: 14px;
+  .skip { position: fixed; top: -48px; left: 12px; z-index: 60; background: var(--ink);
+          color: var(--bg); padding: 7px 14px; border-radius: 4px; font-size: 14px;
           text-decoration: none; }
   .skip:focus-visible { top: 8px; }
   .toast {
     position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-    background: var(--panel2); border: 1px solid var(--line2); border-radius: 10px;
-    padding: 9px 14px; box-shadow: var(--shadow); display: flex; gap: 10px;
+    background: var(--panel); border: 1px solid var(--line2); border-radius: 4px;
+    padding: 9px 14px; display: flex; gap: 10px;
     align-items: center; z-index: 55;
   }
   .toast[hidden] { display: none; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -578,16 +599,19 @@ const store = {
 
 /* ============================== тема ============================== */
 
+/* Тема: auto (следует за системой) → light → dark по кругу. «Адатив» —
+   дефолт по просьбе пользователя; ручной выбор запоминается. */
+const THEME_CYCLE = { auto: "light", light: "dark", dark: "auto" };
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   store.set("gostpadi.theme", t);
+  const btn = $("theme");
+  if (btn) btn.title = { auto: "тема: как в системе", light: "тема: светлая", dark: "тема: тёмная" }[t];
 }
 $("theme").addEventListener("click", () => {
-  const curT = document.documentElement.dataset.theme;
-  const sys = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  applyTheme(curT === "dark" ? "light" : "dark");
+  applyTheme(THEME_CYCLE[document.documentElement.dataset.theme] || "auto");
 });
-applyTheme(store.get("gostpadi.theme") || "dark");
+applyTheme(store.get("gostpadi.theme") || "auto");
 addEventListener("resize", () => { if (zoom === null) applyZoom(); });
 
 /* ============================== статус и тосты ============================== */
