@@ -340,6 +340,28 @@
     display: flex; align-items: center; gap: 8px;
   }
   #statusline.err { color: var(--err); }
+  #statusline .hints {
+    margin-left: auto; display: flex; gap: 10px; align-items: center;
+    color: var(--faint); font-size: 11.5px;
+  }
+  @media (max-width: 1080px) { #statusline .hints { display: none; } }
+
+  /* онбординг: того же лексикона, что и статус-строка */
+  .ph { display: grid; gap: 10px; justify-items: center; max-width: 440px; }
+  .ph .ph-br { color: rgba(253, 252, 252, .35); }
+  .ph button { pointer-events: auto; }
+
+  /* палитра команд ctrl+k */
+  #palette { position: fixed; inset: 0; z-index: 70; background: rgba(15,0,0,.5); padding-top: 14vh; }
+  #palette[hidden] { display: none; }
+  .pbox { width: min(440px, 86vw); margin: 0 auto; background: var(--panel);
+    border: 1px solid var(--line2); border-radius: 4px; overflow: hidden; }
+  #pinput { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent;
+    color: var(--ink); padding: 10px 12px; font: 14px var(--mono); outline: none; }
+  #plist { list-style: none; margin: 0; padding: 4px 0; max-height: 300px; overflow: auto; }
+  #plist li { padding: 8px 12px; color: var(--ink); cursor: pointer; }
+  #plist li small { color: var(--muted); margin-left: 10px; }
+  #plist li.sel { background: var(--accent-soft); color: var(--accent); }
   .spinner {
     width: 13px; height: 13px; flex: none; border-radius: 50%;
     border: 2px solid var(--line2); border-top-color: var(--accent);
@@ -509,7 +531,15 @@
     </div>
     <div id="viewport">
       <div id="stage"></div>
-      <div id="placeholder">вставь код слева — схема появится здесь<br>и перерисуется сама при вводе</div>
+      <div id="placeholder">
+        <div class="ph">
+          <div class="ph-br">[+]</div>
+          <div>вставь код C-файла — схема нарисуется сама<br>и перерисуется при вводе</div>
+          <div class="ph-br">[x]</div>
+          <div>или разбери на примере</div>
+          <button id="ph-ex" class="btn">пример .c</button>
+        </div>
+      </div>
       <div id="pager">
         <button id="prev" aria-label="предыдущий лист">‹</button>
         <span id="dots" role="tablist" aria-label="листы"></span>
@@ -518,7 +548,7 @@
       <button id="zoomcard" class="btn" hidden title="открыть во весь экран">⤢ во весь экран</button>
     </div>
 
-    <div id="statusline">движок загружается…</div>
+    <div id="statusline"><span id="msg">движок загружается…</span><span id="hints" class="hints"><kbd>Ctrl+Enter</kbd> перерисовать <kbd>Ctrl+Z</kbd> отмена <kbd>Ctrl+K</kbd> команды</span></div>
   </section>
 </main>
 
@@ -530,6 +560,13 @@
 
 <div id="dragover" hidden><div>бросай — добавлю в пачку</div></div>
 <div id="toast" class="toast" hidden></div>
+
+<div id="palette" hidden role="dialog" aria-label="команды">
+  <div class="pbox">
+    <input id="pinput" type="text" placeholder="команда…" autocomplete="off">
+    <ul id="plist" role="listbox" aria-label="команды"></ul>
+  </div>
+</div>
 
 <div id="lightbox" hidden aria-modal="true" role="dialog" aria-label="схема">
 <div class="lbbar">
@@ -619,7 +656,8 @@ addEventListener("resize", () => { if (zoom === null) applyZoom(); });
 function status(html, isErr) {
   const el = $("statusline");
   el.className = isErr ? "err" : "";
-  el.innerHTML = html;
+  const m = $("msg");
+  if (m) m.innerHTML = html;
 }
 let toastTimer = null;
 function toast(html) {
@@ -1649,6 +1687,7 @@ function selectFile(i) {
   syncCur();
   cur = i;
   $("code").value = files[i].text;
+  undoReset();
   updateMode();
   drawFileList();
   persist();
@@ -1664,6 +1703,7 @@ function removeFile(i) {
   else {
     cur = Math.max(0, Math.min(cur >= i ? cur - 1 : cur, files.length - 1));
     if (cur >= 0) $("code").value = files[cur].text;
+  undoReset();
   }
   drawFileList();
   persist();
@@ -1678,6 +1718,7 @@ function undoRemove() {
   pendingUndo = null;
   clearTimeout(undoTimer);
   if (cur >= 0) $("code").value = files[cur].text;
+  undoReset();
   drawFileList();
   persist();
   renderNow();
@@ -1771,6 +1812,7 @@ async function loadFiles(list) {
   files = files.concat(added);
   cur = files.indexOf(added[0]);
   $("code").value = files[cur].text;
+  undoReset();
   badNames = new Set();
   drawFileList();
   updateMode();
@@ -1787,6 +1829,7 @@ $("file").addEventListener("change", e => {
 $("clear").addEventListener("click", () => {
   files = []; cur = -1; badNames = new Set();
   $("code").value = "";
+  undoReset();
   store.del("gostpadi.batch");
   drawFileList(); updateMode(); renderNow();
 });
@@ -1844,6 +1887,95 @@ function revealLine(line, col) {
   ta.focus();
   ta.setSelectionRange(off + Math.max(0, (col || 1) - 1), off + (rows[line - 1] || "").length);
   if (matchMedia("(max-width: 1080px)").matches) switchTab("edit");
+}
+
+/* ============================== блок схемы → строка кода ============================== */
+
+/* Текст блока ищется в исходнике нормализацией без пробелов/скобок:
+   «while quant != 0» находит `while (quant != 0)`, «x=x+5» — `x = x + 5;`.
+   Схема — оглавление кода: ткнул в блок, редактор прыгнул на строку. */
+const codeNorm = s => s.toLowerCase().replace(/[()\s]/g, "");
+
+function lineForBlock(label) {
+  const m = codeNorm(label || "");
+  if (m.length < 3 || m.startsWith("#")) return -1;
+  const rows = codeTextNow().split("\n");
+  let best = -1, bestLen = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const n = codeNorm(rows[i]);
+    if (n.length < 2 || !(n === m || n.includes(m) || m.includes(n))) continue;
+    // длина совпадения = уверенность: «sum=sum+1» выигрывает «sum=0»
+    const len = Math.min(n.length, m.length);
+    if (len > bestLen) { best = i; bestLen = len; }
+  }
+  return best + 1; // 1-based, 0 если не нашли
+}
+
+function jumpToBlock(label) {
+  const line = lineForBlock(label);
+  if (line <= 0) return false;
+  revealLine(line, 1);
+  // позиция строки — в видимую треть редактора
+  const ta = $("code");
+  const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+  ta.scrollTop = Math.max(0, (line - 1) * lh - ta.clientHeight / 3);
+  return true;
+}
+
+let blockDown = null;
+function sheetBlockClick(ev) {
+  if (blockDown && Math.hypot(ev.clientX - blockDown[0], ev.clientY - blockDown[1]) > 7) return;
+  const text = ev.target.closest?.("text");
+  // сам .sheet отсекает кнопки тулбара: текст блока бывает только в нём
+  if (!text || !ev.target.closest(".sheet")) return;
+  if (jumpToBlock(text.textContent)) closeLightbox();
+}
+$("viewport").addEventListener("pointerdown", e => { blockDown = [e.clientX, e.clientY]; });
+$("viewport").addEventListener("click", sheetBlockClick);
+$("lbview").addEventListener("pointerdown", e => { blockDown = [e.clientX, e.clientY]; });
+$("lbview").addEventListener("click", sheetBlockClick);
+
+
+/* ============================== undo/redo ============================== */
+
+/* Полная отмена правок кода: нативный undo textarea теряется, как
+   только значение выставляет скрипт (файл, пример, ссылка). Стек
+   снимков {значение, выделение}: каждый ввод фиксирует прошлое
+   состояние, ctrl+z возвращает, ctrl+y /[ctrl+shift+z] повторяет. */
+function codeTextNow() {
+  return cur >= 0 && files[cur] ? files[cur].text : $("code").value;
+}
+const undoStack = [], redoStack = [];
+let undoLast = null, undoLastSel = [0, 0];
+function undoReset() {
+  undoStack.length = 0; redoStack.length = 0;
+  undoLast = null;
+}
+function undoTrack() {
+  const ta = $("code");
+  if (undoLast === null) {
+    undoLast = ta.value;
+    undoLastSel = [ta.selectionStart, ta.selectionEnd];
+    return;
+  }
+  if (ta.value !== undoLast) {
+    undoStack.push({ v: undoLast, s: undoLastSel });
+    if (undoStack.length > 200) undoStack.shift();
+    redoStack.length = 0;
+    undoLast = ta.value;
+  }
+}
+function undoApply(from, to) {
+  const ta = $("code");
+  undoTrack();
+  const snap = from.pop();
+  if (!snap) return;
+  to.push({ v: ta.value, s: [ta.selectionStart, ta.selectionEnd] });
+  ta.value = snap.v;
+  undoLast = snap.v;
+  try { ta.setSelectionRange(snap.s[0], snap.s[1]); } catch { /* позиция вне текста */ }
+  ta.dispatchEvent(new Event("input"));
+  ta.focus();
 }
 
 /* ============================== сохранение и ссылки ============================== */
@@ -1906,6 +2038,7 @@ $("font").addEventListener("input", () => { $("font-val").textContent = $("font"
 $("font").addEventListener("change", () => { store.set("gostpadi.font", $("font").value); renderNow(); });
 
 $("code").addEventListener("input", () => {
+  undoTrack();
   if (cur < 0) {
     store.set("gostpadi.code", $("code").value);
   } else if (files[cur]) {
@@ -1928,6 +2061,15 @@ $("code").addEventListener("keydown", e => {
     clearTimeout(renderTimer);
     renderNow();
   }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+    e.preventDefault();
+    undoApply(undoStack, redoStack);
+  }
+  if ((e.ctrlKey || e.metaKey)
+      && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
+    e.preventDefault();
+    undoApply(redoStack, undoStack);
+  }
 });
 
 for (const b of document.querySelectorAll(".ex")) {
@@ -1938,6 +2080,7 @@ for (const b of document.querySelectorAll(".ex")) {
     drawFileList();
     store.del("gostpadi.batch");
     $("code").value = EXAMPLES[b.dataset.ex];
+    undoReset();
     updateMode();
     store.set("gostpadi.code", $("code").value);
     renderNow();
@@ -2011,6 +2154,72 @@ $("add").addEventListener("click", () => $("file").click());
 
 /* ============================== старт ============================== */
 
+/* палитра команд: ctrl+k где угодно; стрелки/Enter — навигация */
+const COMMANDS = [
+  { t: "пример .c", hint: "разбор демо-схемой", run: () => document.querySelector(".ex[data-ex='c']")?.click() },
+  { t: "экспорт SVG", hint: "в мм, для вставки в отчёт", run: () => $("dsvg").click() },
+  { t: "экспорт PNG", hint: "картинка текущего листа", run: () => $("dpng").click() },
+  { t: "скачать всё", hint: "SVG каждого файла пачки", run: () => $("dall").click() },
+  { t: "копировать SVG", hint: "в буфер обмена", run: () => $("copy").click() },
+  { t: "коллаж", hint: "просмотр листов", run: () => $("dcollage").click() },
+  { t: "скопировать ссылку", hint: "сессия в адресной строке", run: () => $("share").click() },
+  { t: "сменить тему", hint: "система → светлая → тёмная", run: () => $("theme").click() },
+  { t: "очистить всё", hint: "пачка и черновик", run: () => $("clear").click() },
+];
+let pRows = [], pSel = 0;
+
+function pPaint() {
+  const li = $("plist");
+  li.innerHTML = "";
+  pRows.forEach((c, i) => {
+    const el = document.createElement("li");
+    if (i === pSel) el.classList.add("sel");
+    el.textContent = c.t;
+    if (c.hint) {
+      const sm = document.createElement("small");
+      sm.textContent = c.hint;
+      el.appendChild(sm);
+    }
+    el.addEventListener("click", () => { paletteClose(); c.run(); });
+    li.appendChild(el);
+  });
+}
+function pFilter(q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  pRows = COMMANDS.filter(c => words.every(w => (c.t + " " + (c.hint || "")).toLowerCase().includes(w)));
+  pSel = 0;
+  pPaint();
+}
+function paletteOpen() {
+  const p = $("palette");
+  p.hidden = false;
+  const i = $("pinput");
+  i.value = "";
+  pFilter("");
+  i.focus();
+}
+function paletteClose() { $("palette").hidden = true; }
+$("pinput").addEventListener("input", () => pFilter($("pinput").value));
+$("pinput").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { pSel = Math.min(pSel + 1, pRows.length - 1); pPaint(); e.preventDefault(); }
+  if (e.key === "ArrowUp") { pSel = Math.max(pSel - 1, 0); pPaint(); e.preventDefault(); }
+  if (e.key === "Enter" && pRows[pSel]) { paletteClose(); pRows[pSel].run(); }
+  if (e.key === "Escape") { paletteClose(); e.preventDefault(); }
+});
+$("palette").addEventListener("pointerdown", e => { if (e.target.id === "palette") paletteClose(); });
+addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if ($("palette").hidden) paletteOpen(); else paletteClose();
+  } else if (e.key === "Escape" && !$("palette").hidden) {
+    paletteClose();
+  }
+});
+
+$("ph-ex").addEventListener("click", () => {
+  document.querySelector(".ex[data-ex='c']")?.click();
+});
+
 const EXAMPLES = { c: EXAMPLE_C };
 
 (function restore() {
@@ -2023,10 +2232,12 @@ const EXAMPLES = { c: EXAMPLE_C };
         files = saved.files;
         cur = Math.min(Math.max(saved.cur | 0, 0), files.length - 1);
         $("code").value = files[cur].text;
+  undoReset();
       }
     } catch (e) { /* битая ссылка — стартуем с примера */ }
   } else if (hm) {
     $("code").value = b64urlDecode(hm[1]);
+    undoReset();
   } else {
     try {
       const saved = JSON.parse(store.get("gostpadi.batch") || "null");
@@ -2034,11 +2245,13 @@ const EXAMPLES = { c: EXAMPLE_C };
         files = saved.files;
         cur = Math.min(Math.max(saved.cur | 0, 0), files.length - 1);
         $("code").value = files[cur].text;
+  undoReset();
       }
     } catch (e) { /* битый кеш — начнём с примера */ }
     if (cur < 0 && !$("code").value) {
       const savedCode = store.get("gostpadi.code");
       $("code").value = (savedCode && savedCode.trim()) ? savedCode : EXAMPLE_C;
+      undoReset();
     }
   }
   $("ru").checked = store.get("gostpadi.ru") !== "0";
