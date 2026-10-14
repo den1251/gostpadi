@@ -292,7 +292,7 @@ fn split_loop_body(
             continue;
         };
         let (pseudo, map) = pseudo_nodes(&body);
-        if pseudo.len() < 5 {
+        if pseudo.len() < 4 {
             continue;
         }
         // чанк меряется от низа прошлого узла: трапеция и оба в-гэпа
@@ -378,12 +378,6 @@ mod dbg_parts {
     fn dbg_oap_lab1_parts() {
         let st = Style::default();
         let text = std::fs::read_to_string("corpus/oap-lab1.c").unwrap();
-        let opts = crate::pipeline::Options {
-            labels: "en".into(),
-            font: None,
-            lw: None,
-            no_split: false,
-        };
         let funcs = crate::frontend::c::c_to_gvn_functions(&text, "en").unwrap();
         let gvn: Vec<String> = funcs.into_iter().map(|(_, g)| g).collect();
         let n = crate::frontend::gvn::parse(&gvn.join("\n"), &st, "en").unwrap();

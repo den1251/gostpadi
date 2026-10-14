@@ -45,7 +45,7 @@ pub fn measure(st: &Style, kind: &str, text: &str) -> (f64, f64) {
             let ymax = (n - 1.0) * st.pitch / 2.0 + st.text_pad;
             let need = tw + st.cond_pad;
             let w = up((need + ymax * 2.0 / st.aspect).max(IF_MIN_W_GRIDS * g), g);
-            (w, w * st.aspect)
+            (w, up(w * st.aspect, g))
         }
         _ => {
             let h = (2.0 * g).max(up(n * st.pitch + st.pad_y - st.line_slack, g));

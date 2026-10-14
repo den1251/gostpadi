@@ -29,7 +29,10 @@ fn term_min_height_two_grids() {
 fn if_height_tracks_aspect() {
     let st = Style::default();
     let (w, h) = measure(&st, "if", "long condition a < b and c > d ?");
-    assert!((h - w * st.aspect).abs() < 1e-9);
+    // высота ложится на модульную сетку и близка к w * aspect
+    let grid_h = (w * st.aspect / st.grid - 1e-9).ceil() * st.grid;
+    assert!((h - grid_h).abs() < 1e-9);
+    assert!(h > 0.0 && h <= w * st.aspect + st.grid);
 }
 
 /// Кегль 24 удваивает геометрию: measure растёт от font согласованно

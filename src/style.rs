@@ -95,7 +95,7 @@ impl Style {
         rail_step: 2.0 * GRID,
         conn_r: GRID,
         conn_step: GRID,
-        aspect: 1.0,
+        aspect: 0.72,
         a4_w: 468.0,
         a4_h: 700.0,
         page_pad: 14.0,
