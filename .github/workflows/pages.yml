@@ -1,0 +1,48 @@
+name: pages
+# Сайт отдаётся через Actions-артефакт: app.html минифицируется ТОЛЬКО
+# при публикации — исходник в репо остаётся читаемым (готово к правке),
+# а боту не нужен отдельный комплект небитого исходника.
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # dist = docs/ целиком; вместо app.html — минифицированная копия
+      - name: Собрать dist
+        run: |
+          cp -r docs dist
+          npx -y html-minifier-terser dist/app.html \
+            --collapse-whitespace --remove-comments \
+            --minify-css --minify-js \
+            --collapse-boolean-attributes --remove-redundant-attributes \
+            -o dist/app.html
+          echo "app.html до $(wc -c < docs/app.html) → после $(wc -c < dist/app.html) байт"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
