@@ -518,7 +518,6 @@
         <button id="zoomfull" class="btn" title="на весь экран">⤢</button>
       </span>
       <span class="tools">
-        <button id="dcollage" class="btn" disabled title="все листы сразу">коллаж</button>
         <button id="dsvg" class="btn" disabled title="SVG по содержимому, в миллиметрах — для вставки в отчёт">SVG</button>
         <button id="dpng" class="btn" disabled>PNG</button>
         <!-- draw.io прячем: движок на main (16e67e4) экспорта не умеет,
@@ -539,11 +538,6 @@
           <div>или разбери на примере</div>
           <button id="ph-ex" class="btn">пример .c</button>
         </div>
-      </div>
-      <div id="pager">
-        <button id="prev" aria-label="предыдущий лист">‹</button>
-        <span id="dots" role="tablist" aria-label="листы"></span>
-        <button id="next" aria-label="следующий лист">›</button>
       </div>
       <button id="zoomcard" class="btn" hidden title="открыть во весь экран">⤢ во весь экран</button>
     </div>
@@ -622,7 +616,6 @@ let cur = -1;            // -1 — черновик без имени
 let badNames = new Set();
 let sheets = [];         // [{file, i, svg, w, h, name}]
 let activeSheet = 0;
-let viewing = false;     // false — коллаж всех листов, true — просмотр одного
 let zoom = null;         // null = вписать
 let pan = { x: 0, y: 0 };
 let renderTimer = null, pendingUndo = null, undoTimer = null;
@@ -773,7 +766,6 @@ function curItems() {
    враньё, она сделана из другого кода. */
 function dropSheets() {
   sheets = [];
-  viewing = false;
   drawSheets();
   setExport(false);
   $("errbox").classList.remove("show");
@@ -784,7 +776,7 @@ function renderNow() {
   syncCur();
   const items = curItems().filter(it => it.text.trim());
   if (!items.length) {
-    sheets = []; viewing = false; drawSheets();
+    sheets = []; drawSheets();
     setExport(false);
     $("errbox").classList.remove("show");
     status("пусто — вставь код или перетащи файлы");
@@ -929,43 +921,6 @@ function ownSheets() {
   return sheets.filter(s => s.file === name);
 }
 
-function openSheet(idx) {
-  const own = ownSheets();
-  if (!own.length) return;
-  activeSheet = sheets.indexOf(own[Math.max(0, Math.min(idx, own.length - 1))]);
-  viewing = true;
-  zoom = null;
-  drawSheets();
-}
-
-function stepSheet(d) {
-  const own = ownSheets();
-  if (!own.length) return;
-  openSheet(own.indexOf(sheets[activeSheet]) + d);
-}
-
-/* Точки и стрелки показываем только когда лист больше одного: при
-   единственном листе они занимают место и ничего не делают. */
-function drawPager() {
-  const pager = $("pager"), dots = $("dots");
-  const own = ownSheets();
-  const multi = own.length > 1;
-  pager.classList.toggle("show", viewing && multi);
-  dots.innerHTML = "";
-  if (!viewing || !multi) { return; }
-  const at = own.indexOf(sheets[activeSheet]);
-  $("prev").disabled = at <= 0;
-  $("next").disabled = at >= own.length - 1;
-  own.forEach((s, i) => {
-    const b = document.createElement("i");
-    b.title = s.name;
-    b.setAttribute("role", "tab");
-    b.setAttribute("aria-current", i === at ? "true" : "false");
-    b.addEventListener("click", () => openSheet(i));
-    dots.appendChild(b);
-  });
-}
-
 /* Плитка одного листа: карточка фиксированного размера + подпись.
    Размер задаёт коллаж, а не лист: превью должны быть одного
    масштаба между собой, иначе сравнивать схемы нечем. */
@@ -1100,38 +1055,12 @@ function drawSheets() {
   if (!sheets.length) {
     ph.hidden = false;
     stage.className = "";
-    drawPager();
     return;
   }
   ph.hidden = true;
-  const own = ownSheets();
-  if (!viewing || own.length <= 1) {
-    // один лист незачем листать: показываем его, но с коллажным
-    // оформлением, чтобы возврат по «коллаж» не прыгал в пустоту
-    if (own.length <= 1) viewing = false;
-    drawCollage(stage);
-    drawPager();
-    return;
-  }
-  stage.className = "";
-  $("zoomcard").hidden = false;
-  const s = sheets[Math.min(activeSheet, sheets.length - 1)];
-  const card = document.createElement("div");
-  card.className = "sheet";
-  card.style.width = s.w + "px";
-  card.style.height = s.h + "px";
-  const holder = document.createElement("div");
-  holder.innerHTML = s.svg;
-  const svg = holder.firstElementChild;
-  svg.style.width = "100%"; svg.style.height = "100%";
-  card.appendChild(svg);
-  stage.appendChild(card);
-  applyZoom();
-  drawPager();
+  // один режим: коллаж плиток, крупный просмотр — лайтбокс по клику
+  drawCollage(stage);
 }
-
-$("prev").addEventListener("click", () => stepSheet(-1));
-$("next").addEventListener("click", () => stepSheet(1));
 
 /* ============================== полный просмотр ============================== */
 
@@ -1165,12 +1094,12 @@ function openLightbox(idx) {
 function closeLightbox() {
   lbOpen = false;
   $("lightbox").hidden = true;
-  $("zoomcard").hidden = sheets.length === 0 || !viewing;
+  $("zoomcard").hidden = sheets.length === 0;
 }
 
 function lbSize() {
   const v = $("lbview");
-  return { w: v.clientWidth - 48, h: v.clientHeight - 48 };
+  return { w: v.clientWidth, h: v.clientHeight };
 }
 
 function lbFit() {
@@ -1187,14 +1116,14 @@ function lbApply() {
   if (!isFinite(lbZoom) || lbZoom <= 0) lbZoom = lbFit() ?? 1;
   const z = lbZoom;
   const { w, h } = lbSize();
-  if (lbPan === null) {
-    lbPan = { x: Math.max(8, (w - s.w * z) / 2 + 8), y: Math.max(8, (h - s.h * z) / 2 + 8) };
-  }
-  // ось, где схема уже вьюпорта, заперта по центру; где шире — свобода,
-  // но не дальше 8px от края: лист нельзя потерять при панорамировании
+  // центр вмещающейся оси — честный центр вьюпорта; выходящей за край —
+  // свободный сдвиг с упором в 12px от кромки: лист нельзя потерять
   const cw = s.w * z, ch = s.h * z;
-  lbPan.x = cw <= w - 16 ? (w - cw) / 2 + 8 : Math.min(w - 8, Math.max(8 - cw, lbPan.x));
-  lbPan.y = ch <= h - 16 ? (h - ch) / 2 + 8 : Math.min(h - 8, Math.max(8 - ch, lbPan.y));
+  const clampAxis = (size, view, need) =>
+    need <= view ? (view - need) / 2 : Math.min(0, Math.max(view - need, size));
+  if (lbPan === null) lbPan = { x: 0, y: 0 };
+  lbPan.x = clampAxis(lbPan.x, w, cw);
+  lbPan.y = clampAxis(lbPan.y, h, ch);
   stage.style.transform = `translate(${lbPan.x}px, ${lbPan.y}px) scale(${z})`;
   $("lbval").textContent = Math.round(z * 100) + "%";
 }
@@ -1233,7 +1162,11 @@ function lbDraw() {
       d.setAttribute("role", "tab");
       d.setAttribute("aria-current", i === at ? "true" : "false");
       d.innerHTML = x.svg;
-      d.addEventListener("click", () => { openSheet(i); lbDraw(); });
+      d.addEventListener("click", () => {
+        const own = ownSheets();
+        activeSheet = sheets.indexOf(own[i]);
+        lbDraw();
+      });
       thumbs.appendChild(d);
     });
     thumbs.children[at]?.scrollIntoView({ block: "nearest", inline: "center" });
@@ -1247,7 +1180,8 @@ function lbStep(d) {
   const own = ownSheets();
   if (own.length < 2) return;
   const at = own.indexOf(lbSheet());
-  openSheet(at + d);
+  const next = own[(at + d + own.length) % own.length];
+  activeSheet = sheets.indexOf(next);
   lbDraw();
 }
 
@@ -1371,16 +1305,6 @@ $("lbview").addEventListener("dblclick", e => {
   lbApply();
 });
 
-// dblclick по схеме в панели — тоже полный просмотр
-$("viewport").addEventListener("dblclick", e => {
-  if (!e.target.closest(".sheet")) return;
-  openLightbox();
-});
-$("dcollage").addEventListener("click", () => {
-  viewing = false;
-  zoom = null;
-  drawSheets();
-});
 
 function viewportSize() {
   const v = $("viewport");
@@ -1504,7 +1428,7 @@ function curZoom() {
 /* ============================== экспорт ============================== */
 
 function setExport(on) {
-  for (const id of ["dcollage", "dsvg", "dpng", "ddrawio", "dall", "copy"]) $(id).disabled = !on;
+  for (const id of ["dsvg", "dpng", "ddrawio", "dall", "copy"]) $(id).disabled = !on;
 }
 
 /* Принимает и URL, и Blob. Раньше принимала только URL, и кнопка
@@ -1634,12 +1558,8 @@ addEventListener("keydown", e => {
     else if (e.key === "ArrowRight") { lbStep(1); e.preventDefault(); }
     return;
   }
-  if (!viewing || sheets.length < 2) return;
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-  if (e.key === "ArrowLeft") { stepSheet(-1); e.preventDefault(); }
-  else if (e.key === "ArrowRight") { stepSheet(1); e.preventDefault(); }
-  else if (e.key === "Escape") { $("dcollage").click(); }
 });
 
 /* ============================== файлы ============================== */
@@ -2161,7 +2081,6 @@ const COMMANDS = [
   { t: "экспорт PNG", hint: "картинка текущего листа", run: () => $("dpng").click() },
   { t: "скачать всё", hint: "SVG каждого файла пачки", run: () => $("dall").click() },
   { t: "копировать SVG", hint: "в буфер обмена", run: () => $("copy").click() },
-  { t: "коллаж", hint: "просмотр листов", run: () => $("dcollage").click() },
   { t: "скопировать ссылку", hint: "сессия в адресной строке", run: () => $("share").click() },
   { t: "сменить тему", hint: "система → светлая → тёмная", run: () => $("theme").click() },
   { t: "очистить всё", hint: "пачка и черновик", run: () => $("clear").click() },
@@ -2249,8 +2168,7 @@ const EXAMPLES = { c: EXAMPLE_C };
       }
     } catch (e) { /* битый кеш — начнём с примера */ }
     if (cur < 0 && !$("code").value) {
-      const savedCode = store.get("gostpadi.code");
-      $("code").value = (savedCode && savedCode.trim()) ? savedCode : EXAMPLE_C;
+      $("code").value = store.get("gostpadi.code") || "";
       undoReset();
     }
   }

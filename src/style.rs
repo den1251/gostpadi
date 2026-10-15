@@ -31,6 +31,9 @@ pub struct Style {
     pub a4_h: f64,
     pub page_pad: f64,
     pub split_scale: f64,
+    /// схема влезает на лист с масштабом ≥ split_min — не режем её вовсе
+    /// (запрос пользователя: делить только то, что в А4 не влезает)
+    pub split_min: f64,
     /// не резать длинную схему на листы: один лист, вписывание в А4
     /// выполняет общий масштаб пачки (fit_scale)
     pub no_split: bool,
@@ -99,7 +102,8 @@ impl Style {
         a4_w: 468.0,
         a4_h: 700.0,
         page_pad: 14.0,
-        split_scale: 0.70,
+        split_scale: 1.0,
+        split_min: 0.22,
         no_split: false,
         edge_lw: 1.0,
         label_dx: 14.0,

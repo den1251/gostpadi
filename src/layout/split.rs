@@ -63,12 +63,12 @@ fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize, from: usize) 
 pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<Node>> {
     // поиск точки реза ведётся по нижним 88% страницы: ниже листать
     // бессмысленно, выше — резать слишком рано
-    const CUT_SEARCH_FRAC: f64 = 0.88;
+    const CUT_SEARCH_FRAC: f64 = 0.97;
     let mut parts: Vec<Vec<Node>> = Vec::new();
     let mut li = 0usize;
     let n_letters = st.letters.chars().count();
     let letter = |li: usize| st.letters.chars().nth(li % n_letters).unwrap();
-    let limit = (st.a4_h - 2.0 * st.page_pad) * CUT_SEARCH_FRAC;
+    let limit = (st.a4_h - 2.0 * st.page_pad) / st.split_scale * CUT_SEARCH_FRAC;
     let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
     loop {
         // маркер первым в остатке: резать перед ним нечего — глотаем, буква
@@ -99,6 +99,13 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         let res = layout(&items, sizes, st);
         let fits = res.bounds.3 <= budget;
         let marker = items.iter().position(is_marker);
+        // политика пользователя: разрез — крайняя мера. Если целая схема
+        // (вместе с телом цикла) влезает на А4 с неунизительным масштабом
+        // (≥ split_min), она не режется вовсе — ни тело, ни поток
+        if marker.is_none() && super::fit(res.bounds, st) >= st.split_min {
+            parts.push(items);
+            break;
+        }
         if fits && marker.is_none() {
             parts.push(items);
             break;

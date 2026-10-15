@@ -36,6 +36,14 @@ fn leads_to_end(nodes: &[Node], mut j: usize) -> bool {
 /// Фигуры kind: term/ret/io/act/if/loop_begin/loop_end/conn.
 /// Ребро: ломаная из сегментов строго 90°; стрелка ставится в конце,
 /// если arrow. Слияния (T-стыки) рисуются с arrow=false.
+/// Масштаб вписывания раскладки в А4 (единица = рисуем 1:1).
+pub fn fit(bounds: (f64, f64, f64, f64), st: &Style) -> f64 {
+    let (_, _, w, h) = bounds;
+    1.0_f64
+        .min((st.a4_w - 2.0 * st.page_pad) / w)
+        .min((st.a4_h - 2.0 * st.page_pad) / h)
+}
+
 pub fn layout(nodes: &[Node], sizes: &Sizes, st: &Style) -> Layout {
     if nodes.is_empty() {
         return Layout::default();

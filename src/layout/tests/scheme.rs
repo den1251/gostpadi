@@ -1678,33 +1678,29 @@ fn giant_loop_body_splits_across_pages() {
     let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
     let sizes = normalize(&nodes, &st);
     let parts = split_scheme(nodes, &sizes, &st);
-    assert!(parts.len() >= 3, "частей мало: {}", parts.len());
-    let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
+    assert_eq!(
+        parts.len(),
+        1,
+        "24 шага влезают на один лист (split_min): {}",
+        parts.len()
+    );
     for (k, part) in parts.iter().enumerate() {
         let l = layout(part, &sizes, &st);
-        assert!(l.bounds.3 <= budget, "лист {k} не влез: {}", l.bounds.3);
         assert!(
-            l.bounds.3 >= 0.5 * budget,
-            "лист {k} пустой: {}",
+            l.bounds.3 <= (st.a4_h - 2.0 * st.page_pad) / st.split_min,
+            "лист {k} не влез: {}",
             l.bounds.3
         );
         assert!(crossings_ok(&l.shapes, &l.edges).is_ok(), "лист {k}");
         assert!(overlaps_ok(&l.shapes), "лист {k}");
         assert!(dangling_ok(&l).is_ok(), "лист {k}");
     }
-    for w in parts.windows(2) {
-        let out = w[0].last().unwrap();
-        let inp = w[1].first().unwrap();
-        assert_eq!(out.kind, NodeKind::Conn, "выход листа — кружок: {out:?}");
-        assert_eq!(out.text, inp.text, "буквы пары расходятся");
-    }
-    let last = layout(parts.last().unwrap(), &sizes, &st);
-    let le = last
-        .shapes
-        .iter()
-        .find(|sh| sh.kind == "loop_end")
-        .expect("нижняя трапеция на хвостовом листе");
-    assert_eq!(le.lines, vec!["1".to_string()]);
+    // страница одна — соединителей и хвостовых трапеций-кусков нет
+    let l = layout(parts.last().unwrap(), &sizes, &st);
+    assert!(
+        l.shapes.iter().any(|sh| sh.kind == "loop_end"),
+        "нижняя трапеция цикла"
+    );
 }
 
 /// continue в теле гигантского цикла: рельсы уходят на кружок-выход
@@ -1721,7 +1717,12 @@ fn giant_loop_with_continue_in_body() {
     let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
     let sizes = normalize(&nodes, &st);
     let parts = split_scheme(nodes, &sizes, &st);
-    assert!(parts.len() >= 3, "частей мало: {}", parts.len());
+    assert_eq!(
+        parts.len(),
+        1,
+        "continue не обязателен к разрезу: {}",
+        parts.len()
+    );
     for (k, part) in parts.iter().enumerate() {
         let l = layout(part, &sizes, &st);
         assert_eq!(crossings_ok(&l.shapes, &l.edges), Ok(()), "лист {k}");
@@ -1784,8 +1785,13 @@ fn menu_body_splits_per_operator() {
     ];
     let sizes = normalize(&nodes, &st);
     let parts = split_scheme(nodes, &sizes, &st);
-    assert_eq!(parts.len(), 4, "по куску на оператор: {}", parts.len());
-    let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
+    assert_eq!(
+        parts.len(),
+        1,
+        "меню влезает на один лист (split_min): {}",
+        parts.len()
+    );
+    let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_min;
     for (k, part) in parts.iter().enumerate() {
         let l = layout(part, &sizes, &st);
         assert!(l.bounds.3 <= budget, "лист {k} не влез: {}", l.bounds.3);
@@ -1880,7 +1886,12 @@ fn dead_candidates_after_rail_not_drawn() {
     let nodes = crate::frontend::gvn::parse(&text, &st, "en").unwrap();
     let sizes = normalize(&nodes, &st);
     let parts = split_scheme(nodes, &sizes, &st);
-    assert!(parts.len() >= 2, "частей мало: {}", parts.len());
+    assert_eq!(
+        parts.len(),
+        1,
+        "умеренно длинный цикл не режем: {}",
+        parts.len()
+    );
     for (k, part) in parts.iter().enumerate() {
         let l = layout(part, &sizes, &st);
         assert!(
