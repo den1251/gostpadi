@@ -56,9 +56,12 @@ jobs:
             cp target/wasm32-unknown-unknown/release/gostpadi.wasm docs/gostpadi.wasm
             git config user.name "wasm-bot"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            # параллельные прогонки/пуш бота съезжают по fast-forward:
+            # пуш с ребейзом и ретраем вместо голого push
+            git config pull.rebase true
             git add docs/gostpadi.wasm
-            git commit -m "wasm: пересборка движка для сайта"
-            git push
+            git commit -m "wasm: пересборка движка для сайта" || true
+            git push || { git pull --rebase origin main && git push; }
             echo "wasm обновлён и запушен"
           else
             echo "docs/gostpadi.wasm актуален"
