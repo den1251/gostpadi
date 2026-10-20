@@ -1,6 +1,6 @@
 use super::ctx::{BreakAt, ColEnd, Ctx};
 use super::measure::{no_sentinel, HEAD, MID, TAIL};
-use super::types::Anchor;
+use super::types::{Anchor, Shape};
 use crate::ir::Node;
 
 /// Кусок разрезанного цикла: split заменяет цикл парой узлов того же
@@ -113,6 +113,20 @@ impl Ctx<'_> {
             .map(|s| s.cx - s.w / 2.0)
             .fold(f64::INFINITY, f64::min)
             .min(tx - lw / 2.0);
+        // «clear»-проверка «рельса падает из центра плитки прямо на
+        // merge» валидна только когда на вертикали плитки ниже неё нет
+        // чужих фигур: две да-колонки разных if совпадают по абсциссе,
+        // и прямой спуск протыкал нижнюю плитку (eof-брейк сквозь
+        // ok = 1). Проверяем каждую вертикаль по телу цикла.
+        let body_shapes: Vec<Shape> = self.shapes[mark_sh..].to_vec();
+        let blocked = move |x: f64, y0: f64, y1: f64| {
+            body_shapes.iter().any(|s| {
+                (s.cy + s.h / 2.0 > y0 + 1.0)
+                    && (s.cy - s.h / 2.0 < y1 - 1.0)
+                    && (s.cx + s.w / 2.0 > x + 1.0)
+                    && (s.cx - s.w / 2.0 < x - 1.0)
+            })
+        };
         let breaks: Vec<BreakAt> = self.breaks.drain(mark..).collect();
         let conts: Vec<BreakAt> = self.continues.drain(mark_c..).collect();
         // Рельсы break: вниз мимо loop_end, T-стык на продолжении.
@@ -132,8 +146,9 @@ impl Ctx<'_> {
             for b in &breaks {
                 let slot = self.break_slot;
                 self.break_slot += 1;
-                let clear = b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0;
-                if b.from_tile && clear {
+                let free = (b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0)
+                    && !(b.from_tile && blocked(b.tx, b.y, merge));
+                if b.from_tile && free {
                     self.edge(&[(b.tx, b.y), (b.tx, merge), (tx, merge)], false);
                     continue;
                 }
@@ -147,7 +162,12 @@ impl Ctx<'_> {
                 let slot = self.break_slot;
                 self.break_slot += 1;
                 let rx = body_left - self.st.grid * (slot as f64 + 1.0);
-                self.edge(&[(c.tx, c.y), (rx, c.y), (rx, yj), (tx, yj)], false);
+                if c.from_tile && blocked(c.tx, c.y, yj) {
+                    let pts = [(c.tx, c.y), (rx, c.y), (rx, yj), (tx, yj)];
+                    self.edge(&pts, false);
+                } else {
+                    self.edge(&[(c.tx, c.y), (rx, c.y), (rx, yj), (tx, yj)], false);
+                }
             }
         } else {
             // голова/середина: выход листа — кружок под телом (его рисует

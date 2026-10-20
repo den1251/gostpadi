@@ -45,6 +45,11 @@ pub fn fit(bounds: (f64, f64, f64, f64), st: &Style) -> f64 {
 }
 
 pub fn layout(nodes: &[Node], sizes: &Sizes, st: &Style) -> Layout {
+    let l = layout_inner(nodes, sizes, st, true);
+    l
+}
+
+fn layout_inner(nodes: &[Node], sizes: &Sizes, st: &Style, guard: bool) -> Layout {
     if nodes.is_empty() {
         return Layout::default();
     }
@@ -148,7 +153,10 @@ pub fn layout(nodes: &[Node], sizes: &Sizes, st: &Style) -> Layout {
         }
     }
     let l = c.finish();
-    #[cfg(debug_assertions)]
-    geometry::assert_no_crossing(&l.shapes, &l.edges);
+    if guard {
+        #[cfg(debug_assertions)]
+        geometry::assert_no_crossing(&l.shapes, &l.edges);
+    }
     l
 }
+
