@@ -465,9 +465,14 @@ impl Ctx<'_> {
         let y_over = |ci: usize| top0 - (ci + 1) as f64 * self.st.grid;
         let mut ins: Vec<(f64, f64, f64, usize)> = Vec::new(); // sgn, tx, cy, ci
         for ci in 0..n_cols {
-            let left = ci % 2 == 0;
+            // канон учебника: «да» — влево у каждого ромба, «нет» — вниз
+            // по стволу; справа стоит только хвост-else. Чередование
+            // сторон у старого рендера разъезжало колонки в обе
+            // стороны: правая половина висела пустой, масштаб мельчал.
+            let left = ci < k;
             let sgn: f64 = if left { -1.0 } else { 1.0 };
-            let tx = sgn * (base + (ci / 2) as f64 * pitch);
+            let tier = if left { ci } else { 0 };
+            let tx = sgn * (base + tier as f64 * pitch);
             let cy = cy0 + step * ci.min(k - 1) as f64;
             ins.push((sgn, tx, cy, ci));
         }
@@ -570,16 +575,15 @@ impl Ctx<'_> {
                 });
             }
         }
-        // пустой хвост: рельса «нет» на следующей свободной стороне,
-        // жмётся к ромбу и чистит колонки только своей стороны; свою
-        // горизонталь не рисует — её накрывает шина
+        // пустой хвост: рельса «нет» на правой стороне (колонки «да»
+        // всегда слева — правая свободна), жмётся к ромбу и чистит
+        // свои колонки; свою горизонталь не рисует — её накроет шина
         let has_rail = tail.stmts.is_empty();
         if has_rail {
-            let left = k % 2 == 0;
-            let sgn: f64 = if left { -1.0 } else { 1.0 };
+            let sgn: f64 = 1.0;
             let clear = exits
                 .iter()
-                .filter(|e| e.5 == left)
+                .filter(|e| e.5 == false)
                 .map(|e| e.0.abs() + self.nhe + self.st.grid)
                 .fold(dw / 2.0 + 2.0 * self.st.grid, f64::max);
             let bx = super::geometry::up(clear, self.st.grid);

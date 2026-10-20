@@ -1135,7 +1135,7 @@ if a < 0
             "нет вертикального ствола между ромбами"
         );
     }
-    // колонки: чередование сторон L0, R0, L1, R1 на одном top0
+    // колонки: все «да» слева (L0, L1, L2), хвост-else справа (R0)
     let colw = sizes["act"].0.max(sizes["io"].0);
     let nhe = colw / 2.0;
     let base = ifs[0].w / 2.0 + st.hgap + nhe;
@@ -1152,9 +1152,9 @@ if a < 0
     let other = at("?");
     for (sh, x, name) in [
         (neg, -base, "neg L0"),
-        (zero, base, "zero R0"),
-        (pos, -(base + pitch), "pos L1"),
-        (other, base + pitch, "? R1"),
+        (zero, -(base + pitch), "zero L1"),
+        (pos, -(base + 2.0 * pitch), "pos L2"),
+        (other, base, "? R0"),
     ] {
         assert!(
             (sh.cx - x).abs() < 1e-9,
@@ -1185,9 +1185,9 @@ if a < 0
     assert_eq!(bus.len(), 1, "ровно одна горизонтальная шина на merge_y");
     let xs: Vec<f64> = bus[0].points.iter().map(|p| p.0).collect();
     assert!(
-        xs.iter().cloned().fold(f64::MAX, f64::min) <= -(base + pitch) + 1e-9
-            && xs.iter().cloned().fold(f64::MIN, f64::max) >= base + pitch - 1e-9,
-        "шина от крайней левой до крайней правой колонки через 0: {xs:?}"
+        xs.iter().cloned().fold(f64::MAX, f64::min) <= -(base + 2.0 * pitch) + 1e-9
+            && xs.iter().cloned().fold(f64::MIN, f64::max) >= base - 1e-9,
+        "шина от крайней левой да-колонки до хвоста справа через 0: {xs:?}"
     );
     assert_eq!(crossings_ok(&l.shapes, &l.edges), Ok(()));
     assert!(overlaps_ok(&l.shapes));
@@ -1229,23 +1229,25 @@ if a < 0
         .find(|s| s.lines.first().is_some_and(|t| t.contains("zero")))
         .unwrap();
     assert!((neg.cx + base).abs() < 1e-9, "neg L0");
-    assert!((zero.cx - base).abs() < 1e-9, "zero R0");
-    // рельса пустого хвоста из ЛЕВОЙ вершины последнего ромба, жмётся
-    // к ромбу и чистит левые колонки: up(base + nhe + g)
+    assert!(
+        (zero.cx + base + 2.0 * nhe + st.colgap).abs() < 1e-9,
+        "zero L1"
+    );
+    // рельса пустого хвоста из ПРАВОЙ вершины последнего ромба (справа
+    // колонок нет — свободная сторона), жмётся к ромбу: up(base + nhe + g)
     let d2 = ifs[1];
-    let vl = (d2.cx - d2.w / 2.0, d2.cy);
+    let vr = (d2.cx + d2.w / 2.0, d2.cy);
     let rail = l
         .edges
         .iter()
         .find(|e| {
-            !e.arrow && (e.points[0].0 - vl.0).abs() < 1e-9 && (e.points[0].1 - vl.1).abs() < 1e-9
+            !e.arrow && (e.points[0].0 - vr.0).abs() < 1e-9 && (e.points[0].1 - vr.1).abs() < 1e-9
         })
-        .expect("рельса пустого «нет» из левой вершины ромба");
-    let want = -crate::layout::geometry::up(base + nhe + st.grid, st.grid);
+        .expect("рельса пустого «нет» из правой вершины ромба");
     assert!(
-        (rail.points[1].0 - want).abs() < 1e-9,
-        "bx = {}, ожидался -up(base + nhe) = {want}",
-        rail.points[1].0
+        rail.points[1].0 > vr.0 && rail.points[2].0 == rail.points[1].0,
+        "рельса уходит вправо и опускается: {:?}",
+        rail.points
     );
     let my = d2.cy + d2.h / 2.0 + 2.0 * st.grid;
     let buses = l
