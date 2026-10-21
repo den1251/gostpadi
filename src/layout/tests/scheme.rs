@@ -2189,10 +2189,11 @@ fn switch_cases_reachable_from_diamond() {
     assert_cases_reachable(&top, 5);
 }
 
-/// Цикл читается циклом: из нижней трапеции есть ребро назад, вверх к
-/// голове (а не только вниз на продолжение).
+/// Обратной стрелки нет: начало и конец тела связывают одинаковые
+/// номера на трапециях (как в ГОСТ-примерах и методичке). Ни одно ребро
+/// не идёт вверх.
 #[test]
-fn loop_has_return_edge_up_to_head() {
+fn loop_has_no_back_edge_but_matching_numbers() {
     let nodes = vec![
         node(NodeKind::Term, "начало"),
         loop_node("while i < 5", vec![s("i = i + 1")]),
@@ -2201,36 +2202,26 @@ fn loop_has_return_edge_up_to_head() {
     let l = lay(&nodes);
     let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
-    let back = l
-        .edges
-        .iter()
-        .find(|e| {
-            e.arrow
-                && e.points.len() == 4
-                && e.points[0].1 > e.points.last().unwrap().1
-                && (e.points.last().unwrap().1 - lb.cy).abs() < 1e-9
-        })
-        .expect("обратный ход цикла к голове");
+    assert_eq!(le.lines, vec!["1".to_string()], "номер на нижней трапеции");
     assert!(
-        back.points
-            .iter()
-            .any(|p| p.0 < lb.cx - lb.w / 2.0 || p.0 > lb.cx + lb.w / 2.0),
-        "обратный ход идёт коридором снаружи трапеции: {:?}",
-        back.points
+        lb.lines.iter().any(|t| t.starts_with("1. ")),
+        "тот же номер на голове: {:?}",
+        lb.lines
     );
     assert!(
-        (back.points[0].1 - le.cy).abs() < 1e-9,
-        "обратный ход начинается с нижней трапеции: {:?}",
-        back.points
+        !l.edges
+            .iter()
+            .any(|e| e.points.windows(2).any(|w| w[1].1 < w[0].1 - 1.0)),
+        "обратного хода вверх быть не должно"
     );
     assert!(collinear_overlap_ok(&l).is_ok());
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
 }
 
-/// do-while: тело выполняется до проверки — обратный ход идёт к входу
-/// тела, а не к заголовку с условием; маркер «do while» на месте.
+/// do-while: тело выполняется до проверки — это видно по маркеру
+/// «do while» на голове; обратной стрелки нет, связь — номером.
 #[test]
-fn do_while_returns_to_body_entry() {
+fn do_while_is_labeled_on_head() {
     let mut lp = loop_node("x < 3", vec![s("x = x + 1")]);
     lp.loop_kind = Some(crate::ir::LoopKind::DoWhile);
     let nodes = vec![
@@ -2240,20 +2231,18 @@ fn do_while_returns_to_body_entry() {
     ];
     let l = lay(&nodes);
     let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
+    let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     assert_eq!(
         lb.lines,
         vec!["1. do while x < 3".to_string()],
         "маркер do на голове"
     );
-    let back = l
-        .edges
-        .iter()
-        .find(|e| e.arrow && e.points.len() == 4 && e.points[0].1 > e.points.last().unwrap().1)
-        .expect("обратная связь do-while");
-    let end = back.points.last().unwrap();
+    assert_eq!(le.lines, vec!["1".to_string()], "номер на нижней трапеции");
     assert!(
-        end.0 == lb.cx && end.1 > lb.cy + lb.h / 2.0,
-        "do-while возвращается к входу тела, ниже головы: {end:?}"
+        !l.edges
+            .iter()
+            .any(|e| e.points.windows(2).any(|w| w[1].1 < w[0].1 - 1.0)),
+        "обратного хода do-while быть не должно"
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(collinear_overlap_ok(&l).is_ok());

@@ -1,7 +1,7 @@
 use super::ctx::{BreakAt, ColEnd, Ctx};
 use super::measure::{no_sentinel, HEAD, MID, TAIL};
 use super::types::{Anchor, Label, Shape};
-use crate::ir::{LoopKind, Node, NodeKind, Stmt};
+use crate::ir::{Node, NodeKind, Stmt};
 
 /// Кусок разрезанного цикла: split заменяет цикл парой узлов того же
 /// kind, а режим помечает сентинелом в начале текста. Так лист N несёт
@@ -184,17 +184,10 @@ impl Ctx<'_> {
             self.rails_to_end(
                 &breaks, &conts, tx, lw, cy2, yj, body_left, body_right, &blocked,
             );
-            // Обратная связь цикла — только когда обе трапеции на листе
-            // и ни одна рельса не заняла выбранную сторону. Иначе стрелка
-            // пересекала бы их вертикали: номер на обеих трапециях и так
-            // связывает верх с низом.
-            if begins && end != ColEnd::Return {
-                let left_busy = !breaks.iter().chain(conts.iter()).all(|b| b.tx > tx);
-                let right_busy = !breaks.iter().chain(conts.iter()).all(|b| b.tx <= tx);
-                self.loop_back(
-                    nd, tx, lw, cy1, cy2, top0, body_left, body_right, left_busy, right_busy,
-                );
-            }
+            // Обратная стрелка не рисуется: начало и конец тела
+            // связывают одинаковые номера на трапециях (как в
+            // ГОСТ-примерах и методичке).
+            let _ = (begins, cy1, top0);
         } else {
             // голова/середина: выход листа — кружок под телом. Рельсы
             // сводятся на полшага ниже тела: на в-гэпе стоит верх
@@ -408,46 +401,6 @@ impl Ctx<'_> {
                 self.edge(&[(lane, brk_y), (tx, brk_y)], false);
                 self.rail_label(lane, right_side, brk_y, "break");
             }
-        }
-    }
-
-    /// Обратная связь цикла: из бока loop_end вверх, на выбранной
-    /// свободной стороне (без рельс), к голове. while/for возвращаются
-    /// в верхнюю трапецию (проверка условия), do-while — к входу тела:
-    /// тело выполняется до проверки.
-    #[allow(clippy::too_many_arguments)]
-    fn loop_back(
-        &mut self,
-        nd: &Node,
-        tx: f64,
-        lw: f64,
-        cy1: f64,
-        cy2: f64,
-        top0: f64,
-        left: f64,
-        right: f64,
-        left_busy: bool,
-        right_busy: bool,
-    ) {
-        let right_side = if !left_busy {
-            false
-        } else if !right_busy {
-            true
-        } else {
-            return;
-        };
-        let lane = self.lane(right_side, left, right);
-        let x = if right_side {
-            tx + lw / 2.0
-        } else {
-            tx - lw / 2.0
-        };
-        let to_body = nd.loop_kind == Some(LoopKind::DoWhile) && nd.body.is_some();
-        if to_body {
-            let ty = top0 - self.st.grid;
-            self.edge(&[(x, cy2), (lane, cy2), (lane, ty), (tx, ty)], true);
-        } else {
-            self.edge(&[(x, cy2), (lane, cy2), (lane, cy1), (x, cy1)], true);
         }
     }
 }
