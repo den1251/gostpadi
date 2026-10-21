@@ -42,6 +42,145 @@ pub fn crossings_ok(shapes: &[Shape], edges: &[Edge]) -> Result<(), String> {
     Ok(())
 }
 
+/// X-пересечение двух сегментов разных рёбер. T-стык (конец одного
+/// сегмента лежит на другом) — это слияние потока, оно легально;
+/// коллинеарные наложения — отдельный класс, здесь не проверяются.
+/// Пары «горизонталь × вертикаль»: диагоналей раскладка не рисует.
+pub fn edges_cross_ok(l: &Layout) -> Result<(), String> {
+    const TOL: f64 = 0.01;
+    let is_h = |a: (f64, f64), b: (f64, f64)| (a.1 - b.1).abs() < 1e-9;
+    let is_v = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-9;
+    for (i, ea) in l.edges.iter().enumerate() {
+        for eb in l.edges.iter().skip(i + 1) {
+            for pa in ea.points.windows(2) {
+                for pb in eb.points.windows(2) {
+                    let (a1, a2, b1, b2) = (pa[0], pa[1], pb[0], pb[1]);
+                    // упорядочиваем: h — горизонталь, v — вертикаль
+                    let (h, v) = if is_h(a1, a2) && is_v(b1, b2) {
+                        ((a1, a2), (b1, b2))
+                    } else if is_v(a1, a2) && is_h(b1, b2) {
+                        ((b1, b2), (a1, a2))
+                    } else {
+                        continue;
+                    };
+                    let (hx1, hx2) = (h.0 .0.min(h.1 .0), h.0 .0.max(h.1 .0));
+                    let (vy1, vy2) = (v.0 .1.min(v.1 .1), v.0 .1.max(v.1 .1));
+                    let (x, y) = (v.0 .0, h.0 .1);
+                    let inside =
+                        x >= hx1 - TOL && x <= hx2 + TOL && y >= vy1 - TOL && y <= vy2 + TOL;
+                    if !inside {
+                        continue;
+                    }
+                    // конец любого из сегментов в точке встречи — стык
+                    let at_end = [h.0, h.1, v.0, v.1]
+                        .iter()
+                        .any(|p| (p.0 - x).abs() <= TOL && (p.1 - y).abs() <= TOL);
+                    if at_end {
+                        continue;
+                    }
+                    return Err(format!(
+                        "ребро #{i} {:?}-{:?} пересекает ребро {:?}-{:?} в ({x:.2}, {y:.2})",
+                        a1, a2, b1, b2
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Плоские участки контура по сторонам bbox: (верх, низ, лево, право).
+/// None — сторона не прямая (ромб, круг) либо её нет (скос
+/// параллелограмма), и линия «на кромке» там не читается гранью.
+fn flat_sides(sh: &Shape) -> [Option<(f64, f64)>; 4] {
+    let (x0, x1) = (sh.cx - sh.w / 2.0, sh.cx + sh.w / 2.0);
+    let (y0, y1) = (sh.cy - sh.h / 2.0, sh.cy + sh.h / 2.0);
+    match sh.kind.as_str() {
+        // капсула: прямые участки между полуокружностями
+        "term" | "ret" => [
+            Some((x0 + sh.h / 2.0, x1 - sh.h / 2.0)),
+            Some((x0 + sh.h / 2.0, x1 - sh.h / 2.0)),
+            Some((y0 + sh.h / 2.0, y1 - sh.h / 2.0)),
+            Some((y0 + sh.h / 2.0, y1 - sh.h / 2.0)),
+        ],
+        // параллелограмм: боковые стороны наклонные, считаем только
+        // горизонтальные кромки (наклон не совпадает с осью сегмента)
+        "io" => {
+            let dx = sh.h / 3.732_050_807_568_877_6; // tan(75°)
+            [Some((x0 + dx, x1)), Some((x0, x1 - dx)), None, None]
+        }
+        "if" | "conn" => [None, None, None, None],
+        "loop_begin" => [
+            Some((x0 + sh.skew, x1 - sh.skew)),
+            Some((x0, x1)),
+            Some((y0 + sh.skew, y1)),
+            Some((y0 + sh.skew, y1)),
+        ],
+        "loop_end" => [
+            Some((x0, x1)),
+            Some((x0 + sh.skew, x1 - sh.skew)),
+            Some((y0, y1 - sh.skew)),
+            Some((y0, y1 - sh.skew)),
+        ],
+        _ => [
+            Some((x0, x1)),
+            Some((x0, x1)),
+            Some((y0, y1)),
+            Some((y0, y1)),
+        ],
+    }
+}
+
+/// Сегмент лежит на кромке фигуры (EPS 0.01) — линия сливается с
+/// границей блока и читается как его грань. Вход в фигуру по нормали
+/// (перпендикулярно кромке, пересечение нулевой длины) — не дефект.
+pub fn edge_on_border_ok(l: &Layout) -> Result<(), String> {
+    const TOL: f64 = 0.01;
+    for (ei, e) in l.edges.iter().enumerate() {
+        for seg in e.points.windows(2) {
+            let (p1, p2) = (seg[0], seg[1]);
+            let horiz = (p1.1 - p2.1).abs() < 1e-9;
+            let vert = (p1.0 - p2.0).abs() < 1e-9;
+            if !horiz && !vert {
+                continue;
+            }
+            for (si, sh) in l.shapes.iter().enumerate() {
+                let x0 = sh.cx - sh.w / 2.0;
+                let x1 = sh.cx + sh.w / 2.0;
+                let y0 = sh.cy - sh.h / 2.0;
+                let y1 = sh.cy + sh.h / 2.0;
+                let sides = flat_sides(sh);
+                let (span, at) = if horiz {
+                    ((p1.0.min(p2.0), p1.0.max(p2.0)), p1.1)
+                } else {
+                    ((p1.1.min(p2.1), p1.1.max(p2.1)), p1.0)
+                };
+                let candidates: [(f64, usize); 2] = if horiz {
+                    [(y0, 0), (y1, 1)]
+                } else {
+                    [(x0, 2), (x1, 3)]
+                };
+                for &(coord, side) in &candidates {
+                    if (at - coord).abs() > TOL {
+                        continue;
+                    }
+                    let Some((a, b)) = sides[side] else {
+                        continue;
+                    };
+                    let overlap = span.1.min(b) - span.0.max(a);
+                    if overlap > TOL {
+                        return Err(format!(
+                            "ребро #{ei} сегмент {p1:?}-{p2:?} идёт по кромке фигуры #{si} ({})",
+                            sh.kind
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(debug_assertions)]
 pub(super) fn assert_no_crossing(shapes: &[Shape], edges: &[Edge]) {
     if let Err(e) = crossings_ok(shapes, edges) {
@@ -152,4 +291,108 @@ pub fn single_entry_ok(l: &Layout) -> bool {
         .filter(|e| into_end(e) && !inbound_from_conn(e))
         .count()
         == 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edge(points: &[(f64, f64)]) -> Edge {
+        Edge {
+            points: points.to_vec(),
+            arrow: false,
+        }
+    }
+
+    fn layout(edges: Vec<Edge>) -> Layout {
+        Layout {
+            edges,
+            ..Layout::default()
+        }
+    }
+
+    fn shape(kind: &str, cx: f64, cy: f64, w: f64, h: f64) -> Shape {
+        Shape {
+            kind: kind.into(),
+            cx,
+            cy,
+            w,
+            h,
+            skew: 0.0,
+            lines: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn x_crossing_is_defect() {
+        let l = layout(vec![
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
+            edge(&[(100.0, 0.0), (100.0, 100.0)]),
+        ]);
+        assert!(edges_cross_ok(&l).is_err(), "X в (100,50)");
+    }
+
+    #[test]
+    fn t_junction_and_shared_corner_are_ok() {
+        // T: конец вертикали на внутренности горизонтали
+        let t = layout(vec![
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
+            edge(&[(100.0, 50.0), (100.0, 100.0)]),
+        ]);
+        assert!(edges_cross_ok(&t).is_ok(), "T-стык — слияние потока");
+        // общий угол двух ломаных
+        let corner = layout(vec![
+            edge(&[(0.0, 50.0), (100.0, 50.0)]),
+            edge(&[(100.0, 50.0), (100.0, 100.0)]),
+        ]);
+        assert!(edges_cross_ok(&corner).is_ok());
+    }
+
+    #[test]
+    fn collinear_overlap_is_not_x() {
+        let l = layout(vec![
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
+            edge(&[(100.0, 50.0), (300.0, 50.0)]),
+        ]);
+        assert!(edges_cross_ok(&l).is_ok(), "наложение — отдельный класс");
+    }
+
+    #[test]
+    fn segment_on_rect_border_is_defect() {
+        let l = Layout {
+            shapes: vec![shape("act", 100.0, 100.0, 80.0, 40.0)],
+            edges: vec![edge(&[(60.0, 120.0), (120.0, 120.0)])],
+            ..Layout::default()
+        };
+        assert!(edge_on_border_ok(&l).is_err(), "линия по нижней грани");
+    }
+
+    #[test]
+    fn normal_entry_and_corner_touch_are_ok() {
+        // вход сверху по нормали: пересечение с кромкой нулевой длины
+        let entry = Layout {
+            shapes: vec![shape("act", 100.0, 100.0, 80.0, 40.0)],
+            edges: vec![edge(&[(100.0, 40.0), (100.0, 80.0)])],
+            ..Layout::default()
+        };
+        assert!(edge_on_border_ok(&entry).is_ok());
+        // касание угла: отрезок уходит влево от левого нижнего угла
+        let corner = Layout {
+            shapes: vec![shape("act", 100.0, 100.0, 80.0, 40.0)],
+            edges: vec![edge(&[(60.0, 120.0), (0.0, 120.0)])],
+            ..Layout::default()
+        };
+        assert!(edge_on_border_ok(&corner).is_ok());
+    }
+
+    #[test]
+    fn diamond_sides_are_not_flat_borders() {
+        // вертикаль из правой вершины ромба вниз: bbox-сторона не контур
+        let l = Layout {
+            shapes: vec![shape("if", 0.0, 100.0, 200.0, 100.0)],
+            edges: vec![edge(&[(100.0, 100.0), (100.0, 160.0)])],
+            ..Layout::default()
+        };
+        assert!(edge_on_border_ok(&l).is_ok());
+    }
 }

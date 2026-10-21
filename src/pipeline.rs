@@ -8,8 +8,8 @@ use crate::frontend::gvn::parse;
 use crate::generate::{fit_scale, render_svg_at, render_svg_tight};
 use crate::ir::Node;
 use crate::layout::{
-    crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok, split_scheme,
-    strip_markers, uniform_sizes, Edge, Label, Layout, Sizes,
+    crossings_ok, dangling_ok, edge_on_border_ok, edges_cross_ok, layout, normalize, overlaps_ok,
+    single_entry_ok, split_scheme, strip_markers, uniform_sizes, Edge, Label, Layout, Sizes,
 };
 use crate::style::Style;
 
@@ -65,6 +65,8 @@ pub fn validate(schemes: &[Scheme], st: &Style) -> Vec<(String, Result<String, S
             let res = || {
                 crossings_ok(&l.shapes, &l.edges)
                     .map_err(|e| format!("линии заходят на блоки: {e}"))?;
+                edges_cross_ok(&l).map_err(|e| format!("линии пересекаются: {e}"))?;
+                edge_on_border_ok(&l).map_err(|e| format!("линия идёт по кромке блока: {e}"))?;
                 dangling_ok(&l).map_err(|e| format!("обрыв линии: {e}"))?;
                 if !overlaps_ok(&l.shapes) {
                     return Err("фигуры перекрываются".to_string());

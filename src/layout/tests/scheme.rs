@@ -215,9 +215,14 @@ fn break_rail_on_head_page_exits_via_letter() {
         .find(|e| !e.arrow && e.points.len() >= 4)
         .expect("рельса в коридоре");
     assert_eq!(
-        rail.points.last().copied(),
-        Some((conn.cx, conn.cy - conn.h / 2.0)),
-        "T-стык на вертикали входа в кружок"
+        rail.points.last().map(|p| p.0),
+        Some(conn.cx),
+        "рельса приходит на вертикаль входа в кружок"
+    );
+    let last = rail.points.last().copied().unwrap();
+    assert!(
+        last.1 < conn.cy - conn.h / 2.0,
+        "T-стык на полшага выше кружка, не на его кромке: {last:?}"
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(dangling_ok(&l).is_ok());
@@ -460,6 +465,16 @@ fn examples_layout_invariants() {
         assert!(
             crossings_ok(&l.shapes, &l.edges).is_ok(),
             "{}: линии заходят на блоки",
+            path.display()
+        );
+        assert!(
+            crate::layout::edges_cross_ok(&l).is_ok(),
+            "{}: линии пересекаются",
+            path.display()
+        );
+        assert!(
+            crate::layout::edge_on_border_ok(&l).is_ok(),
+            "{}: линия идёт по кромке блока",
             path.display()
         );
         assert!(
@@ -1458,6 +1473,9 @@ output printf(\"далее\")
     let top2 = dsh.cy + dsh.h / 2.0 + crate::layout::vgap(&st);
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     let merge_y = le.cy + le.h / 2.0 + st.mgap;
+    // рельсы break и continue сливаются на одной высоте — посередине
+    // выхода loop_end: разные концы давали X между рельсами
+    let join_y = (le.cy + le.h / 2.0 + merge_y) * 0.5;
     // вход в «да»-колонку (канон: справа) без стрелки; ось колонки
     // берём из самого ребра — она пакуется по экстенту ветки
     let entry = l
@@ -1479,23 +1497,23 @@ output printf(\"далее\")
         })
     });
     assert!(!bogus, "спуск rail-колонки к шине слияния не рисуется");
-    // рельса break: левый канал ниже loop_end, T-стык на продолжении
+    // рельса break: коридор своей стороны ниже loop_end, T-стык на продолжении
     let (lw, _) = measure(&st, "loop", "while true");
     let rail = l
         .edges
         .iter()
         .find(|e| {
-            e.points.iter().any(|p| p.0 < -lw / 2.0)
+            e.points.iter().any(|p| p.0.abs() > lw / 2.0)
                 && e.points
                     .last()
-                    .map(|p| p.0 == 0.0 && (p.1 - merge_y).abs() < 1e-9)
+                    .map(|p| p.0 == 0.0 && (p.1 - join_y).abs() < 1e-9)
                     .unwrap_or(false)
         })
-        .expect("рельса break в левом канале");
+        .expect("рельса break в коридоре");
     let last = rail.points.last().unwrap();
     assert!(
-        last.0 == 0.0 && (last.1 - merge_y).abs() < 1e-9,
-        "рельса приходит на выход цикла: {last:?} vs {merge_y}"
+        last.0 == 0.0 && (last.1 - join_y).abs() < 1e-9,
+        "рельса приходит на слияние рельс: {last:?} vs {join_y}"
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(single_entry_ok(&l));

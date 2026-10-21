@@ -113,6 +113,14 @@ impl Ctx<'_> {
             .map(|s| s.cx - s.w / 2.0)
             .fold(f64::INFINITY, f64::min)
             .min(tx - lw / 2.0);
+        // Симметричный правый край: рельса из правой колонки уходит в
+        // правый коридор, а не через ствол налево (её горизонталь на
+        // высоте низа плитки резала ствол цикла).
+        let body_right = self.shapes[mark_sh..]
+            .iter()
+            .map(|s| s.cx + s.w / 2.0)
+            .fold(f64::NEG_INFINITY, f64::max)
+            .max(tx + lw / 2.0);
         // «clear»-проверка «рельса падает из центра плитки прямо на
         // merge» валидна только когда на вертикали плитки ниже неё нет
         // чужих фигур: две да-колонки разных if совпадают по абсциссе,
@@ -129,68 +137,86 @@ impl Ctx<'_> {
         };
         let breaks: Vec<BreakAt> = self.breaks.drain(mark..).collect();
         let conts: Vec<BreakAt> = self.continues.drain(mark_c..).collect();
-        // Рельсы break: вниз мимо loop_end, T-стык на продолжении.
+        // Рельсы break/continue: вниз мимо loop_end, T-стык на продолжении.
         //
-        // Колонка плитки (b.tx) уже своя ось: если она не накрыта трапецией
-        // слияния, рельса падает из центра плитки прямо на merge и вправо
-        // на ось — один изгиб. Коридор тогда не нужен, и лишней ступеньки
-        // нет. Трапеция шириной lw по центру tx, так что достаточно
-        // выйти за её половину.
-        //
-        // Плитка на месте — отъезд вниз на в-gap нужен ещё и по виду:
-        // горизонталь с высоты низа плитки сливается с её границей и
-        // читается как уход из угла, а не из центра. Колонка без плиток
-        // (только break/continue) выходит сразу влево: выходить неоткуда,
-        // и вертикаль на её оси запрещена.
+        // Прямой спуск из плитки, стоящей вне трапеции, — самый короткий
+        // путь без ступеньки: колонка b.tx уже своя ось. Но только если
+        // на вертикали ниже нет чужих фигур и нет другой рельсы той же
+        // стороны — её первая горизонталь шла бы через эту колонку.
+        // Остальные уходят в коридор своей стороны: правая колонка —
+        // вправо, иначе её горизонталь режет ствол цикла. Колонка без
+        // плиток (только break/continue) выходит сразу в коридор:
+        // выходить из неё неоткуда, вертикаль на её оси пустая.
         if ends {
-            for b in &breaks {
-                let slot = self.break_slot;
-                self.break_slot += 1;
-                let free = (b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0)
-                    && !(b.from_tile && blocked(b.tx, b.y, merge));
-                if b.from_tile && free {
-                    self.edge(&[(b.tx, b.y), (b.tx, merge), (tx, merge)], false);
-                    continue;
-                }
-                let rx = body_left - self.st.grid * (slot as f64 + 1.0);
-                self.rail_to(b, rx, merge, tx);
-            }
-            // рельсы continue: тот же коридор, T-стык на выходе loop_end —
-            // следующая итерация
+            // Общая высота слияния рельс: continue уходил на середину
+            // выхода loop_end, break — на merge ниже. Разные концы давали
+            // частичное перекрытие интервалов, и вертикаль одной рельсы
+            // неизбежно резала горизонталь другой (labfix-14: пять рельс
+            // в левом поле, 8 X). Одна высота убирает и разницу, и X.
             let yj = (cy2 + lh / 2.0 + merge) * 0.5;
-            for c in &conts {
-                let slot = self.break_slot;
-                self.break_slot += 1;
-                let rx = body_left - self.st.grid * (slot as f64 + 1.0);
-                if c.from_tile && blocked(c.tx, c.y, yj) {
-                    let pts = [(c.tx, c.y), (rx, c.y), (rx, yj), (tx, yj)];
-                    self.edge(&pts, false);
+            // Прямой спуск из плитки, стоящей вне трапеции, — самый
+            // короткий путь и без ступеньки; такие рельсы занимают свою
+            // колонку и в коридоре слотов не участвуют.
+            let mut rails: Vec<&BreakAt> = Vec::new();
+            let all: Vec<&BreakAt> = breaks.iter().chain(conts.iter()).collect();
+            for b in &breaks {
+                let free = (b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0)
+                    && !(b.from_tile && blocked(b.tx, b.y, yj));
+                // Прямой спуск идёт по своей колонке внутри тела; рельса
+                // той же стороны идёт в коридор снаружи и её первая
+                // горизонталь режет эту колонку (oap-lab2: break прямо из
+                // плитки и break из пустой ветки на одной стороне).
+                let side = b.tx > tx;
+                let same_side = all
+                    .iter()
+                    .any(|r| !std::ptr::eq(*r, b) && (r.tx > tx) == side);
+                if b.from_tile && free && !same_side {
+                    self.edge(&[(b.tx, b.y), (b.tx, yj), (tx, yj)], false);
                 } else {
-                    self.edge(&[(c.tx, c.y), (rx, c.y), (rx, yj), (tx, yj)], false);
+                    rails.push(b);
                 }
             }
+            rails.extend(conts.iter());
+            self.rail_set(&mut rails, yj, tx, body_left, body_right);
         } else {
-            // голова/середина: выход листа — кружок под телом (его рисует
-            // следующий узел), обе рельсы сводятся на верх этого кружка:
-            // вертикаль входа и сам кружок там уже есть
-            let y_exit = yend + self.vg();
-            for b in breaks.iter().chain(conts.iter()) {
-                let slot = self.break_slot;
-                self.break_slot += 1;
-                let rx = body_left - self.st.grid * (slot as f64 + 1.0);
-                self.rail_to(b, rx, y_exit, tx);
-            }
+            // голова/середина: выход листа — кружок под телом. Рельсы
+            // сводятся на полшага ниже тела: на в-гэпе стоит верх
+            // следующего блока, и горизонталь ложилась на его кромку
+            // (labfix-09: рельса break по верхней грани io).
+            let y_exit = yend + self.st.grid;
+            let mut rails: Vec<&BreakAt> = breaks.iter().chain(conts.iter()).collect();
+            self.rail_set(&mut rails, y_exit, tx, body_left, body_right);
         }
         self.loop_depth -= 1;
         (merge, ColEnd::Flow)
     }
 
-    /// Рельса break/continue: из плитки вниз на в-гэп (иначе горизонталь
-    /// сливается с её границей), влево по коридору и горизонталь на y к оси.
+    /// Рельсы уходят в коридор своей стороны (правая колонка — вправо:
+    /// иначе её первая горизонталь режет ствол цикла). Верхняя рельса
+    /// ставится дальше от оси: её вертикаль не пересекает горизонтали
+    /// нижних, а те оканчиваются на её высоте — T-стык.
+    fn rail_set(&mut self, rails: &mut [&BreakAt], y: f64, tx: f64, left: f64, right: f64) {
+        rails.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal));
+        for b in rails.iter() {
+            let slot = self.break_slot;
+            self.break_slot += 1;
+            let rx = if b.tx > tx {
+                right + self.st.grid * (slot as f64 + 1.0)
+            } else {
+                left - self.st.grid * (slot as f64 + 1.0)
+            };
+            self.rail_to(b, rx, y, tx);
+        }
+    }
+
+    /// Рельса break/continue: из плитки вниз на полшага сетки (иначе
+    /// горизонталь ложится на нижнюю грань плитки), влево по коридору и
+    /// горизонталь на y к оси. Полшага, а не в-гэп: в-гэп от низа тела
+    /// приходится ровно на верхнюю грань loop_end (labfix-05).
     fn rail_to(&mut self, b: &BreakAt, rx: f64, y: f64, tx: f64) {
         let mut pts = vec![(b.tx, b.y)];
-        if b.from_tile && b.y + self.vg() < y {
-            pts.push((b.tx, b.y + self.vg()));
+        if b.from_tile && b.y + self.st.grid <= y {
+            pts.push((b.tx, b.y + self.st.grid));
         }
         let by = pts[pts.len() - 1].1;
         pts.push((rx, by));
