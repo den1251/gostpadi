@@ -224,6 +224,7 @@ impl<'a> Ctx<'a> {
                 maxy - miny + 2.0 * pad,
             ),
             anchors: self.anchors,
+            title: None,
         }
     }
 }

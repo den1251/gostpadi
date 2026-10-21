@@ -3,7 +3,7 @@
 
 use crate::drawio::book;
 use crate::error::ParseError;
-use crate::frontend::c::c_to_gvn_functions;
+use crate::frontend::c::c_to_gvn_functions_full;
 use crate::frontend::gvn::parse;
 use crate::generate::{fit_scale, render_svg_at, render_svg_tight};
 use crate::ir::Node;
@@ -31,6 +31,16 @@ impl Options {
     }
 }
 
+/// Схема пайплайна: путь (файл или «файл#функция»), узлы и подпись.
+/// Подпись — сигнатура функции для коробки «предопределённый процесс»
+/// над схемой; у main и .gvn-входа её нет.
+#[derive(Clone, Debug)]
+pub struct Scheme {
+    pub path: String,
+    pub nodes: Vec<Node>,
+    pub title: Option<String>,
+}
+
 /// Путь схемы -> (вход, функция): «dir/main.c#main» -> («dir/main.c», Some("main")).
 /// Функции нет (gvn-вход) — второй элемент None.
 pub fn scheme_parts(path: &str) -> (&str, Option<&str>) {
@@ -41,18 +51,16 @@ pub fn scheme_parts(path: &str) -> (&str, Option<&str>) {
 /// Проверка схем на инварианты ГОСТ-раскладки: линии под прямыми углами,
 /// без пересечений и обрывов, в «конец» — одна стрелка. Без рисования.
 /// Возвращает по схеме имя и «что не так» (Ok — всё чисто, с числом блоков).
-pub fn validate(
-    schemes: &[(String, Vec<Node>)],
-    st: &Style,
-) -> Vec<(String, Result<String, String>)> {
+pub fn validate(schemes: &[Scheme], st: &Style) -> Vec<(String, Result<String, String>)> {
     schemes
         .iter()
-        .map(|(scheme, nodes)| {
-            let (inp, fun) = scheme_parts(scheme);
+        .map(|s| {
+            let (inp, fun) = scheme_parts(&s.path);
             let name = match fun {
                 Some(f) => format!("{inp}#{f}"),
                 None => inp.to_string(),
             };
+            let nodes = &s.nodes;
             let l = layout(nodes, &normalize(nodes, st), st);
             let res = || {
                 crossings_ok(&l.shapes, &l.edges)
@@ -71,35 +79,46 @@ pub fn validate(
         .collect()
 }
 
-/// Пачка входов (путь, текст, это C?) -> (путь, узлы).
+/// Пачка входов (путь, текст, это C?) -> схемы.
 /// Ошибка разбора возвращается вместе с путём входа.
 /// C-вход с несколькими функциями даёт по схеме на функцию:
 /// путь схемы «файл.c#имя_функции» (решение 06.10: рисуем все функции).
 pub fn parse_batch(
     inputs: &[(String, String, bool)],
     opts: &Options,
-) -> Result<Vec<(String, Vec<Node>)>, (String, ParseError)> {
+) -> Result<Vec<Scheme>, (String, ParseError)> {
     let st = opts.style();
     let mut out = Vec::with_capacity(inputs.len());
     for (path, text, is_c) in inputs {
         let res = if *is_c {
-            c_to_gvn_functions(text, &opts.labels).and_then(|fs| {
+            c_to_gvn_functions_full(text, &opts.labels).and_then(|fs| {
                 fs.into_iter()
-                    .map(|(fname, gvn)| {
+                    .map(|(fname, signature, gvn)| {
                         // main — схема самого входа (main.c -> main.svg),
-                        // прочие функции получают суффикс: main.c#add ->
-                        // main-add.svg, иначе схема main переписала бы их
-                        let scheme_path = if fname == "main" {
-                            path.clone()
+                        // прочие функции получают суффикс: main.c#sum_neg ->
+                        // main-sum_neg.svg, иначе схема main переписала бы их.
+                        // main — программа, а не функция: подписи нет.
+                        let (scheme_path, title) = if fname == "main" {
+                            (path.clone(), None)
                         } else {
-                            format!("{path}#{fname}")
+                            (format!("{path}#{fname}"), Some(signature))
                         };
-                        parse(&gvn, &st, &opts.labels).map(|n| (scheme_path, n))
+                        parse(&gvn, &st, &opts.labels).map(|n| Scheme {
+                            path: scheme_path,
+                            nodes: n,
+                            title,
+                        })
                     })
                     .collect::<Result<Vec<_>, _>>()
             })
         } else {
-            parse(text, &st, &opts.labels).map(|n| vec![(path.clone(), n)])
+            parse(text, &st, &opts.labels).map(|n| {
+                vec![Scheme {
+                    path: path.clone(),
+                    nodes: n,
+                    title: None,
+                }]
+            })
         };
         match res {
             Ok(mut s) => out.append(&mut s),
@@ -116,27 +135,31 @@ pub fn parse_batch(
 /// только вывод.
 
 /// Узлы пачки -> раскладки, общие на все файлы: размеры фигур
-/// единые (uniform_sizes), как у обычного рендера.
-fn export_layouts(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, Vec<Layout>)> {
-    let normed: Vec<Sizes> = schemes.iter().map(|(_, n)| normalize(n, st)).collect();
+/// единые (uniform_sizes), как у обычного рендера. Подпись ложится на
+/// единственный лист.
+fn export_layouts(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Vec<Layout>)> {
+    let normed: Vec<Sizes> = schemes.iter().map(|s| normalize(&s.nodes, st)).collect();
     let sizes = uniform_sizes(&normed);
     schemes
         .into_iter()
-        .map(|(path, mut nodes)| {
+        .map(|s| {
             // порезка не нужна: страниц нет, схема одна. Маркеры ручного
             // переноса — тоже: кружок-соединитель на одном листе сирота
+            let mut nodes = s.nodes;
             strip_markers(&mut nodes);
             let st = Style {
                 no_split: true,
                 ..st.clone()
             };
-            (path, vec![layout(&nodes, &sizes, &st)])
+            let mut l = layout(&nodes, &sizes, &st);
+            l.title = s.title;
+            (s.path, vec![l])
         })
         .collect()
 }
 
 /// SVG по содержимому, без листа: для вставки в отчёт.
-pub fn render_tight_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, String)> {
+pub fn render_tight_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, String)> {
     export_layouts(schemes, st)
         .into_iter()
         .map(|(path, parts)| {
@@ -147,7 +170,7 @@ pub fn render_tight_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<
 }
 
 /// Книга draw.io по той же пачке: один файл со всеми листами.
-pub fn render_drawio_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, String)> {
+pub fn render_drawio_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, String)> {
     export_layouts(schemes.clone(), st)
         .into_iter()
         .map(|(path, parts)| {
@@ -223,8 +246,8 @@ fn join_parts(parts: &[Layout]) -> Layout {
 /// режутся на листы А4 (или одним листом при no_split — тогда высокий
 /// лист ужимает общий масштаб); размеры фигур и масштаб общие на всю
 /// пачку: figures одного типа во всех файлах — одного визуального размера.
-pub fn render_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, Vec<String>)> {
-    let normed: Vec<Sizes> = schemes.iter().map(|(_, n)| normalize(n, st)).collect();
+pub fn render_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Vec<String>)> {
+    let normed: Vec<Sizes> = schemes.iter().map(|s| normalize(&s.nodes, st)).collect();
     let sizes = uniform_sizes(&normed);
     // Масштаб пачки — минимум постраничных вписываний, и рез идёт под
     // него: бюджет листа = А4/масштаб. При бюджете 1.0 лист режется на
@@ -265,7 +288,7 @@ pub fn render_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(Strin
 
 /// Постраничная раскладка пачки с бюджетом листа А4/`scale`.
 fn laid_pages(
-    schemes: &[(String, Vec<Node>)],
+    schemes: &[Scheme],
     sizes: &Sizes,
     st: &Style,
     scale: f64,
@@ -276,19 +299,24 @@ fn laid_pages(
     };
     schemes
         .iter()
-        .map(|(path, nodes)| {
-            let pages = if st.no_split {
+        .map(|s| {
+            let mut pages = if st.no_split {
                 // без порезки маркер ручного переноса рисовать нечем: лист один
-                let mut nodes = nodes.clone();
+                let mut nodes = s.nodes.clone();
                 strip_markers(&mut nodes);
                 vec![layout(&nodes, sizes, &cut_st)]
             } else {
-                split_scheme(nodes.clone(), sizes, &cut_st)
+                split_scheme(s.nodes.clone(), sizes, &cut_st)
                     .iter()
                     .map(|part| layout(part, sizes, &cut_st))
                     .collect()
             };
-            (path.clone(), pages)
+            // подпись функции — на первом листе: продолжение начинается
+            // с кружка-соединителя, коробке там некуда стрелять
+            if let Some(first) = pages.first_mut() {
+                first.title = s.title.clone();
+            }
+            (s.path.clone(), pages)
         })
         .collect()
 }
@@ -297,7 +325,7 @@ fn laid_pages(
 fn batch_scale(laid: &[(String, Vec<Layout>)], st: &Style) -> f64 {
     laid.iter()
         .flat_map(|(_, pages)| pages)
-        .map(|l| fit_scale(l.bounds, st))
+        .map(|l| fit_scale(l, st))
         .fold(1.0_f64, f64::min)
 }
 
@@ -640,11 +668,15 @@ mod tests {
         for n in 1..=4 {
             let path = format!("{}/corpus/oap-lab{n}.c", env!("CARGO_MANIFEST_DIR"));
             let text = std::fs::read_to_string(&path).unwrap();
-            for (name, gvn) in c_to_gvn_functions(&text, "en").unwrap() {
-                schemes.push((format!("lab{n}#{name}"), parse(&gvn, &st, "en").unwrap()));
+            for (name, sig, gvn) in c_to_gvn_functions_full(&text, "en").unwrap() {
+                schemes.push(Scheme {
+                    path: format!("lab{n}#{name}"),
+                    nodes: parse(&gvn, &st, "en").unwrap(),
+                    title: Some(sig),
+                });
             }
         }
-        let normed: Vec<Sizes> = schemes.iter().map(|(_, n)| normalize(n, &st)).collect();
+        let normed: Vec<Sizes> = schemes.iter().map(|s| normalize(&s.nodes, &st)).collect();
         let sizes = uniform_sizes(&normed);
         let out = render_batch(schemes.clone(), &st);
         let sheets: usize = out.iter().map(|(_, pages)| pages.len()).sum();
@@ -669,12 +701,13 @@ mod tests {
         }
         // каждый лист — валидная ГОСТ-схема: линии не заходят на блоки,
         // нет обрывов и второго входа
-        for (name, nodes) in &schemes {
+        for s in &schemes {
+            let name = &s.path;
             let cut_st = Style {
                 split_scale: st.split_min,
                 ..st.clone()
             };
-            let parts = split_scheme(nodes.clone(), &sizes, &cut_st);
+            let parts = split_scheme(s.nodes.clone(), &sizes, &cut_st);
             for (i, part) in parts.iter().enumerate() {
                 let l = layout(part, &sizes, &st);
                 assert_eq!(

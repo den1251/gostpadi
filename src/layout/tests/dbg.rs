@@ -3,7 +3,7 @@
 //! cargo test --quiet dbg_pages -- --ignored --nocapture
 
 use crate::layout::{layout, normalize, split_scheme, uniform_sizes};
-use crate::pipeline::{parse_batch, Options};
+use crate::pipeline::{parse_batch, Options, Scheme};
 use crate::style::Style;
 
 fn opts() -> Options {
@@ -15,7 +15,7 @@ fn opts() -> Options {
     }
 }
 
-fn parse(paths: &[&str]) -> Vec<(String, Vec<crate::ir::Node>)> {
+fn parse(paths: &[&str]) -> Vec<Scheme> {
     let inputs: Vec<(String, String, bool)> = paths
         .iter()
         .map(|p| {
@@ -35,11 +35,11 @@ fn pages_at(paths: &[&str], scale: f64) {
         ..opts().style()
     };
     let schemes = parse(paths);
-    let normed: Vec<_> = schemes.iter().map(|(_, n)| normalize(n, &st)).collect();
+    let normed: Vec<_> = schemes.iter().map(|s| normalize(&s.nodes, &st)).collect();
     let sizes = uniform_sizes(&normed);
-    for (path, nodes) in schemes {
-        let parts = split_scheme(nodes, &sizes, &st);
-        println!("== {path}: {} листов", parts.len());
+    for s in schemes {
+        let parts = split_scheme(s.nodes, &sizes, &st);
+        println!("== {}: {} листов", s.path, parts.len());
         for (i, p) in parts.iter().enumerate() {
             let l = layout(p, &sizes, &st);
             let (_, _, w, h) = l.bounds;

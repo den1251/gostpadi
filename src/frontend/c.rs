@@ -84,6 +84,19 @@ pub fn c_to_gvn(src: &str, labels: &str) -> Result<String, ParseError> {
 /// молча, а файл без main отказ. Теперь все функции — своя схема,
 /// имя несёт «файл#функция».
 pub fn c_to_gvn_functions(src: &str, labels: &str) -> Result<Vec<(String, String)>, ParseError> {
+    Ok(c_to_gvn_functions_full(src, labels)?
+        .into_iter()
+        .map(|(name, _, gvn)| (name, gvn))
+        .collect())
+}
+
+/// То же, но с сигнатурой функции для подписи схемы: (имя, сигнатура, gvn).
+/// Сигнатура — из исходника как в C: `print_mas(const int a[], int n)`;
+/// без параметров — `print_mas(void)`.
+pub fn c_to_gvn_functions_full(
+    src: &str,
+    labels: &str,
+) -> Result<Vec<(String, String, String)>, ParseError> {
     let prepared = prepare(src);
     let config = Config {
         cpp_command: String::new(),
@@ -102,6 +115,8 @@ pub fn c_to_gvn_functions(src: &str, labels: &str) -> Result<Vec<(String, String
         let Some(name) = declarator_name(&f.node.declarator) else {
             continue;
         };
+        let signature = declarator_signature(&f.node.declarator, &prepared)
+            .unwrap_or_else(|| format!("{name}(void)"));
         let Statement::Compound(items) = &f.node.statement.node else {
             continue;
         };
@@ -131,7 +146,7 @@ pub fn c_to_gvn_functions(src: &str, labels: &str) -> Result<Vec<(String, String
         }
         let mut gvn = String::from("#gostpadi 1\n");
         emit_nodes(&nodes, 0, &mut gvn);
-        out.push((name, gvn));
+        out.push((name, signature, gvn));
     }
     if out.is_empty() {
         return Err(ParseError::new(
@@ -573,6 +588,43 @@ fn declarator_name(d: &LangNode<Declarator>) -> Option<String> {
         DeclaratorKind::Declarator(inner) => declarator_name(inner),
         DeclaratorKind::Abstract => None,
     }
+}
+
+/// Первый «функциональный» кусок декларатора (указатель на функцию —
+/// вложенный декларатор, поэтому спускаемся внутрь).
+fn function_declarator(d: &LangNode<Declarator>) -> Option<&LangNode<FunctionDeclarator>> {
+    for dd in &d.node.derived {
+        if let DerivedDeclarator::Function(f) = &dd.node {
+            return Some(f);
+        }
+    }
+    match &d.node.kind.node {
+        DeclaratorKind::Declarator(inner) => function_declarator(inner),
+        _ => None,
+    }
+}
+
+/// Сигнатура функции по исходнику: имя + список параметров, как их
+/// написал студент. Пробелы внутри параметра схлопываются (перенос
+/// строки, табы), сам текст типа не сочиняем — срез AST-спана.
+/// Без параметров — `имя(void)`, как требует C.
+fn declarator_signature(d: &LangNode<Declarator>, src: &str) -> Option<String> {
+    let f = function_declarator(d)?;
+    let mut parts: Vec<String> = f
+        .node
+        .parameters
+        .iter()
+        .filter_map(|p| src.get(p.span.start..p.span.end))
+        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|t| !t.is_empty())
+        .collect();
+    if parts.is_empty() {
+        parts.push("void".into());
+    }
+    if f.node.ellipsis == Ellipsis::Some {
+        parts.push("...".into());
+    }
+    Some(format!("{}({})", declarator_name(d)?, parts.join(", ")))
 }
 
 /// Забивает /* */ и // пробелами, строковые литералы не трогает.
@@ -1552,6 +1604,42 @@ mod tests {
             "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }";
         let e = c_to_gvn_functions(src, "en").unwrap_err();
         assert!(e.msg.contains("нет рисуемых операторов"), "{}", e.msg);
+    }
+
+    /// Подпись функции — сигнатура из C как её написал студент:
+    /// параметры со спецификаторами и массивами, без параметров — (void).
+    #[test]
+    fn function_signature_from_source() {
+        let src = include_str!("../../corpus/oap-lab3.c");
+        let fs = c_to_gvn_functions_full(src, "en").unwrap();
+        let sig = |n: &str| {
+            fs.iter()
+                .find(|(name, _, _)| name == n)
+                .map(|(_, s, _)| s.as_str())
+                .unwrap_or_else(|| panic!("нет функции {n}: {fs:?}"))
+        };
+        assert_eq!(sig("sum_neg"), "sum_neg(int a[], int n)");
+        assert_eq!(sig("print_mas"), "print_mas(const int a[], int n)");
+        assert_eq!(sig("main"), "main(void)");
+
+        let fs = c_to_gvn_functions_full(
+            "int Min(int x, int y) { printf(\"%d\", x); return x; }\n\
+             void f(void) { printf(\"x\"); }\n\
+             int g() { printf(\"y\"); }\n\
+             int *h(char **v, ...) { printf(\"z\"); }",
+            "en",
+        )
+        .unwrap();
+        let sig = |n: &str| {
+            fs.iter()
+                .find(|(name, _, _)| name == n)
+                .map(|(_, s, _)| s.to_string())
+                .unwrap_or_default()
+        };
+        assert_eq!(sig("Min"), "Min(int x, int y)");
+        assert_eq!(sig("f"), "f(void)");
+        assert_eq!(sig("g"), "g(void)");
+        assert_eq!(sig("h"), "h(char **v, ...)");
     }
 
     /// Декларация со значением — рисуемая, поэтому main с одной такой

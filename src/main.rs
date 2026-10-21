@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use gostpadi::error::ParseError;
-use gostpadi::ir::Node;
 use gostpadi::layout::{
     crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok,
 };
@@ -292,12 +291,13 @@ fn main() {
             Err((path, e)) => die_parse(&path, &e),
         };
         let multi = schemes.len() > 1;
-        for (scheme, nodes) in &schemes {
-            let (inp, fun) = pipeline::scheme_parts(scheme);
+        for s in &schemes {
+            let (inp, fun) = pipeline::scheme_parts(&s.path);
             let name = match fun {
                 Some(f) => format!("{inp}#{f}"),
                 None => inp.to_string(),
             };
+            let nodes = &s.nodes;
             let l = layout(nodes, &normalize(nodes, &st), &st);
             let bad = |msg: String| -> ! {
                 eprintln!("{name}: {msg}");
@@ -325,7 +325,7 @@ fn main() {
     }
 
     // пачка: сбойный вход не останавливает остальные (порт render_many)
-    let mut schemes: Vec<(String, Vec<Node>)> = Vec::new();
+    let mut schemes: Vec<pipeline::Scheme> = Vec::new();
     let mut parse_failed = false;
     for src in &sources {
         match pipeline::parse_batch(std::slice::from_ref(src), &opts) {

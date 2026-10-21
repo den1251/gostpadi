@@ -330,6 +330,53 @@ fn all_functions_of_file_get_own_scheme() {
     assert!(d.join("o/two-add.svg").exists(), "helper — свой файл");
 }
 
+/// Схема функции подписана её сигнатурой: коробка «предопределённый
+/// процесс» (прямоугольник с двойными вертикальными линиями) над
+/// «началом», стрелка из коробки в овал. main — программа, не функция:
+/// подписи нет (репорт: на доске блок Min(x,y) → начало → … → конец).
+#[test]
+fn function_signature_is_drawn_above_schema() {
+    let d = tmp("signature");
+    let src = concat!(env!("CARGO_MANIFEST_DIR"), "/corpus/oap-lab3.c");
+    let out = run(&[src, "-o", d.join("o/").to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let read = |name: &str| fs::read_to_string(d.join("o").join(name)).unwrap();
+
+    let print = read("oap-lab3-print_mas.svg");
+    assert!(
+        print.contains("print_mas(const int a[], int n)"),
+        "нет сигнатуры над схемой print_mas"
+    );
+    assert_eq!(
+        print.matches("<line ").count(),
+        2,
+        "коробка подписи без двойных вертикальных линий"
+    );
+
+    let sum = read("oap-lab3-sum_neg.svg");
+    assert!(
+        sum.contains("sum_neg(int a[], int n)"),
+        "нет сигнатуры над схемой sum_neg"
+    );
+
+    let main = read("oap-lab3.svg");
+    assert!(
+        !main.contains("main(void)") && !main.contains("<line "),
+        "main подписан как функция"
+    );
+
+    let chk = run(&["--check", src]);
+    assert!(
+        chk.status.success(),
+        "--check корпуса: {}",
+        String::from_utf8_lossy(&chk.stderr)
+    );
+}
+
 /// Файл без main, но с функцией — не отказ: единственная функция
 /// файла и есть схема.
 #[test]

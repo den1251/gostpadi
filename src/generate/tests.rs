@@ -25,6 +25,7 @@ fn hand(shapes: Vec<Shape>, edges: Vec<Edge>, labels: Vec<Label>) -> Layout {
         labels,
         bounds: (0.0, 0.0, 200.0, 300.0),
         anchors: Vec::new(),
+        title: None,
     }
 }
 
@@ -101,6 +102,42 @@ fn white_background_rect_before_g() {
         dims[2], dims[3]
     );
     assert!(head.contains(&expect), "нет подложки {expect} в {head}");
+}
+
+/// Подпись функции — коробка «предопределённый процесс» (ГОСТ 19.701-90:
+/// прямоугольник с двойными вертикальными линиями), текст — сигнатура,
+/// из низа коробки стрелка в «начало». Высота документа её учитывает.
+#[test]
+fn title_is_predefined_process_box_with_arrow() {
+    let st = Style::default();
+    let mut l = all_kinds();
+    l.title = Some("Min(int x, int y)".into());
+    let svg = render_svg(&l, &st);
+    assert!(svg.contains("Min(int x, int y)"), "нет сигнатуры: {svg}");
+    assert_eq!(
+        svg.matches("<line ").count(),
+        2,
+        "двойные вертикальные линии символа подпрограммы"
+    );
+    let height = |s: &str| -> f64 {
+        s.split("height=\"")
+            .nth(1)
+            .and_then(|p| p.split("pt").next())
+            .and_then(|v| v.parse().ok())
+            .unwrap()
+    };
+    let plain = render_svg(&all_kinds(), &st);
+    assert_eq!(
+        plain.matches("<line ").count(),
+        0,
+        "без подписи нет коробки"
+    );
+    assert!(
+        height(&svg) > height(&plain) + 30.0,
+        "подпись не добавила высоты: {} vs {}",
+        height(&svg),
+        height(&plain)
+    );
 }
 
 #[test]

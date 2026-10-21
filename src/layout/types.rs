@@ -42,6 +42,8 @@ pub struct Layout {
     pub labels: Vec<Label>,
     pub bounds: (f64, f64, f64, f64),
     pub anchors: Vec<Anchor>,
+    /// Подпись схемы над «началом» (сигнатура функции). У main и .gvn — None.
+    pub title: Option<String>,
 }
 
 pub type Sizes = BTreeMap<&'static str, (f64, f64)>;

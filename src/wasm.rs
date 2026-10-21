@@ -201,7 +201,7 @@ pub extern "C" fn gostpadi_render_batch(
     };
     let st = opts.style();
     // сбойные входы не останавливают остальные (порт CLI-пачки)
-    let mut ok: Vec<(String, Vec<crate::ir::Node>)> = Vec::new();
+    let mut ok: Vec<pipeline::Scheme> = Vec::new();
     let mut errors: Vec<(String, crate::error::ParseError)> = Vec::new();
     for (name, text, is_c) in &inputs {
         match pipeline::parse_batch(
