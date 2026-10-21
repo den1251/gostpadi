@@ -2024,3 +2024,137 @@ fn letters_wrap_past_alphabet() {
         "буквы обязаны зацикливаться"
     );
 }
+
+/// Точки, достижимые по графу рёбер от start: вершины ломаных плюс
+/// T-стыки (вершина на внутренности чужого отрезка). Фигуры не
+/// проходятся — путь сквозь блок считается недостижимым.
+fn reachable(l: &Layout, start: (f64, f64)) -> Vec<(f64, f64)> {
+    const TOL: f64 = 0.01;
+    fn find(uf: &mut [usize], mut x: usize) -> usize {
+        while uf[x] != x {
+            uf[x] = uf[uf[x]];
+            x = uf[x];
+        }
+        x
+    }
+    fn union(uf: &mut [usize], a: usize, b: usize) {
+        let (ra, rb) = (find(uf, a), find(uf, b));
+        if ra != rb {
+            uf[ra] = rb;
+        }
+    }
+    let key = |p: (f64, f64)| ((p.0 * 100.0).round() as i64, (p.1 * 100.0).round() as i64);
+    let mut pts: Vec<(f64, f64)> = l.edges.iter().flat_map(|e| e.points.clone()).collect();
+    pts.push(start);
+    let idx: std::collections::HashMap<(i64, i64), usize> =
+        pts.iter().enumerate().map(|(i, &p)| (key(p), i)).collect();
+    let mut uf: Vec<usize> = (0..pts.len()).collect();
+    let on = |p: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+        if (a.0 - b.0).abs() < 1e-9 {
+            (p.0 - a.0).abs() <= TOL && p.1 >= a.1.min(b.1) - TOL && p.1 <= a.1.max(b.1) + TOL
+        } else if (a.1 - b.1).abs() < 1e-9 {
+            (p.1 - a.1).abs() <= TOL && p.0 >= a.0.min(b.0) - TOL && p.0 <= a.0.max(b.0) + TOL
+        } else {
+            false
+        }
+    };
+    for e in &l.edges {
+        for w in e.points.windows(2) {
+            let (Some(&ia), Some(&ib)) = (idx.get(&key(w[0])), idx.get(&key(w[1]))) else {
+                continue;
+            };
+            union(&mut uf, ia, ib);
+            for (i, &p) in pts.iter().enumerate() {
+                if on(p, w[0], w[1]) {
+                    union(&mut uf, i, ia);
+                }
+            }
+        }
+    }
+    let root = find(&mut uf, idx[&key(start)]);
+    (0..pts.len())
+        .filter(|&i| find(&mut uf, i) == root)
+        .map(|i| pts[i])
+        .collect()
+}
+
+/// Каждый кейс switch достижим от нижней вершины ромба по рёбрам, не
+/// заходя в другие кейсы (фигуры график не проходят). Ловит сетку,
+/// второй ряд которой питается выходами первого ряда, а не ромбом.
+fn assert_cases_reachable(nodes: &[Node], n_cases: usize) {
+    let st = Style::default();
+    let sizes = normalize(nodes, &st);
+    let l = layout(nodes, &sizes, &st);
+    let sw = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "if" && sh.lines.join(" ").contains("switch"))
+        .expect("ромб switch");
+    let reach = reachable(&l, (sw.cx, sw.cy + sw.h / 2.0));
+    for k in 1..=n_cases {
+        let tile = format!("a{k} = {k}");
+        let case = l
+            .shapes
+            .iter()
+            .find(|sh| sh.lines.iter().any(|t| t.contains(&tile)))
+            .unwrap_or_else(|| panic!("нет кейса {k}"));
+        let entry = (case.cx, case.cy - case.h / 2.0);
+        assert!(
+            reach
+                .iter()
+                .any(|p| (p.0 - entry.0).abs() < 0.01 && (p.1 - entry.1).abs() < 0.01),
+            "кейс {k} не достижим от ромба switch: вход {entry:?}"
+        );
+    }
+    assert!(crate::layout::edges_cross_ok(&l).is_ok());
+    assert!(crate::layout::collinear_overlap_ok(&l).is_ok());
+    assert!(overlaps_ok(&l.shapes));
+}
+
+fn switch_decision(n_cases: usize) -> Node {
+    let mut d = node(NodeKind::Decision, "if switch (d)");
+    d.switch_var = Some("d".into());
+    d.branches = (1..=n_cases)
+        .map(|k| br(&k.to_string(), vec![s(&format!("a{k} = {k}"))], false))
+        .collect();
+    d
+}
+
+#[test]
+fn switch_cases_reachable_from_diamond() {
+    // вложенный switch: 4 кейса = сетка 2x2 (класс labfix-06)
+    let nested4 = {
+        let mut outer = node(NodeKind::Decision, "if m > 0");
+        outer.branches = vec![
+            br("да", vec![Stmt::Node(Box::new(switch_decision(4)))], false),
+            br("нет", vec![s("b = 2")], false),
+        ];
+        vec![
+            node(NodeKind::Term, "начало"),
+            outer,
+            node(NodeKind::Term, "конец"),
+        ]
+    };
+    assert_cases_reachable(&nested4, 4);
+    // вложенный switch: 5 кейсов = три ряда, последний на оси
+    let nested5 = {
+        let mut outer = node(NodeKind::Decision, "if m > 0");
+        outer.branches = vec![
+            br("да", vec![Stmt::Node(Box::new(switch_decision(5)))], false),
+            br("нет", vec![s("b = 2")], false),
+        ];
+        vec![
+            node(NodeKind::Term, "начало"),
+            outer,
+            node(NodeKind::Term, "конец"),
+        ]
+    };
+    assert_cases_reachable(&nested5, 5);
+    // switch верхнего уровня: switch_rows
+    let top = vec![
+        node(NodeKind::Term, "начало"),
+        switch_decision(5),
+        node(NodeKind::Term, "конец"),
+    ];
+    assert_cases_reachable(&top, 5);
+}

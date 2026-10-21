@@ -336,10 +336,12 @@ impl Ctx<'_> {
         let mut merged = false;
         for (ri, row) in cases.chunks(2).enumerate() {
             if ri > 0 {
-                // шина ряда — та же линия, что слияние предыдущего: два
-                // горизонтальных отрезка подряд читались как двойная рельса
-                y_bus = merge_y;
-                trunk_from = merge_y;
+                // Шина ряда питается от оси switch, а не от слияния прошлого
+                // ряда: слив и вход следующего ряда — разные высоты, иначе
+                // выходы кейсов ряда 1 читаются как вход кейсов ряда 2.
+                y_bus = merge_y + self.vg();
+                self.edge(&[(0.0, merge_y), (0.0, y_bus)], false);
+                trunk_from = y_bus;
             }
             let mut live: Vec<f64> = Vec::new();
             let mut gone: Vec<(f64, f64, bool, Option<char>)> = Vec::new(); // x, yend, to_end, link
@@ -397,6 +399,12 @@ impl Ctx<'_> {
                 let hi = live.iter().cloned().fold(f64::MIN, f64::max);
                 self.edge(&[(lo.min(0.0), merge_y), (hi.max(0.0), merge_y)], false);
                 merged = true;
+            }
+            // ствол на оси между колонками ряда: связь ромба с шиной
+            // следующего ряда. У нечётного хвоста на оси стоит его
+            // колонка — там ствол не рисуется.
+            if row.len() > 1 {
+                self.edge(&[(0.0, y_bus), (0.0, merge_y)], false);
             }
             // «-> конец»: спуск до уровня слияния ряда, наружу за сетку,
             // дальше рельсу дорисует layout() над «концом»

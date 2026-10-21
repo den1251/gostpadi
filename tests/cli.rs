@@ -602,7 +602,6 @@ fn no_fix_flag_switches_to_strict() {
     assert!(help.contains("--no-fix"), "флаг не описан в --help");
 }
 
-
 #[test]
 fn output_file_keeps_function_schemes() {
     // -o файл не должен склеивать схемы функций в один файл
@@ -615,20 +614,35 @@ fn output_file_keeps_function_schemes() {
         .arg(&out)
         .output()
         .unwrap();
-    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert!(
+        st.status.success(),
+        "{}",
+        String::from_utf8_lossy(&st.stderr)
+    );
     let names: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
         .collect();
-    assert!(names.iter().any(|n| n.starts_with("lab-show_mas")), "{names:?}");
-    assert!(names.iter().any(|n| n.starts_with("lab-max_diag")), "{names:?}");
+    assert!(
+        names.iter().any(|n| n.starts_with("lab-show_mas")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.starts_with("lab-max_diag")),
+        "{names:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn small_scale_warns() {
     let st = std::process::Command::new(env!("CARGO_BIN_EXE_gostpadi"))
-        .args(["corpus/oap-lab2.c", "--no-split", "-o", "/tmp/gostpadi-warn.svg"])
+        .args([
+            "corpus/oap-lab2.c",
+            "--no-split",
+            "-o",
+            "/tmp/gostpadi-warn.svg",
+        ])
         .output()
         .unwrap();
     assert!(st.status.success());

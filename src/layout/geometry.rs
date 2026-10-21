@@ -89,6 +89,66 @@ pub fn edges_cross_ok(l: &Layout) -> Result<(), String> {
     Ok(())
 }
 
+/// Двойная линия: участок нарисован дважды. Два вида — копия ребра
+/// (тот же отрезок ещё раз) и шина, повторно собранная из кусков
+/// (отрезок целиком покрыт объединением более коротких коллинеарных
+/// отрезков других рёбер). Сходящиеся хвосты рельс в одну точку — это
+/// T-слияние, а не копия: короткий хвост не покрывает длинный целиком.
+/// Двойная линия жирнее прочих на рендере и читается как ошибка рисунка.
+pub fn collinear_overlap_ok(l: &Layout) -> Result<(), String> {
+    const TOL: f64 = 0.01;
+    // (ребро, направление: true — горизонталь, линия-координата, начало, конец)
+    let mut segs: Vec<(usize, bool, f64, f64, f64)> = Vec::new();
+    for (i, e) in l.edges.iter().enumerate() {
+        for w in e.points.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let h = (a.1 - b.1).abs() < 1e-9;
+            let v = (a.0 - b.0).abs() < 1e-9;
+            if h && v {
+                continue; // точка
+            }
+            if h {
+                segs.push((i, true, a.1, a.0.min(b.0), a.0.max(b.0)));
+            } else if v {
+                segs.push((i, false, a.0, a.1.min(b.1), a.1.max(b.1)));
+            }
+        }
+    }
+    for (k, &(ei, h, line, lo, hi)) in segs.iter().enumerate() {
+        let len = hi - lo;
+        let mut cover: Vec<(f64, f64)> = Vec::new();
+        for (j, &(ej, hj, lj, a, b)) in segs.iter().enumerate() {
+            if j == k || ei == ej || hj != h || (lj - line).abs() > TOL {
+                continue;
+            }
+            if (a - lo).abs() <= TOL && (b - hi).abs() <= TOL {
+                return Err(format!(
+                    "ребро #{ei} {lo:.2}..{hi:.2} нарисовано дважды (ребро #{ej})"
+                ));
+            }
+            // кусок короче исходного и лежит внутри него — деталь шины
+            if b - a < len - TOL && a >= lo - TOL && b <= hi + TOL {
+                cover.push((a, b));
+            }
+        }
+        // покрыт ли отрезок целиком объединением кусков (шина из половин)
+        cover.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut cur = lo;
+        for (a, b) in cover {
+            if a > cur + TOL {
+                break;
+            }
+            cur = cur.max(b);
+            if cur >= hi - TOL {
+                return Err(format!(
+                    "ребро #{ei} {lo:.2}..{hi:.2} нарисовано дважды (шина из кусков)"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Плоские участки контура по сторонам bbox: (верх, низ, лево, право).
 /// None — сторона не прямая (ромб, круг) либо её нет (скос
 /// параллелограмма), и линия «на кромке» там не читается гранью.
@@ -349,12 +409,54 @@ mod tests {
     }
 
     #[test]
-    fn collinear_overlap_is_not_x() {
-        let l = layout(vec![
+    fn double_line_is_defect() {
+        // копия ребра
+        let dup = layout(vec![
             edge(&[(0.0, 50.0), (200.0, 50.0)]),
-            edge(&[(100.0, 50.0), (300.0, 50.0)]),
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
         ]);
-        assert!(edges_cross_ok(&l).is_ok(), "наложение — отдельный класс");
+        assert!(edges_cross_ok(&dup).is_ok(), "наложение — отдельный класс");
+        assert!(
+            collinear_overlap_ok(&dup).is_err(),
+            "линия нарисована дважды"
+        );
+        // шина и повторно собранные из половин те же 170–708
+        let bus = layout(vec![
+            edge(&[(170.0, 50.0), (708.0, 50.0)]),
+            edge(&[(170.0, 50.0), (439.0, 50.0)]),
+            edge(&[(439.0, 50.0), (708.0, 50.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&bus).is_err(), "шина из кусков");
+        // вертикальная копия
+        let vdup = layout(vec![
+            edge(&[(10.0, 0.0), (10.0, 100.0)]),
+            edge(&[(10.0, 0.0), (10.0, 100.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&vdup).is_err());
+    }
+
+    #[test]
+    fn collinear_shared_end_and_apart_are_ok() {
+        // общий конец: продолжение линии, не наложение
+        let joint = layout(vec![
+            edge(&[(0.0, 50.0), (100.0, 50.0)]),
+            edge(&[(100.0, 50.0), (200.0, 50.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&joint).is_ok());
+        // разные прямые
+        let apart = layout(vec![
+            edge(&[(0.0, 50.0), (100.0, 50.0)]),
+            edge(&[(0.0, 60.0), (100.0, 60.0)]),
+            edge(&[(0.0, 50.0), (0.0, 100.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&apart).is_ok());
+        // сходящиеся хвосты (рельсы в одну точку): короткий не копия
+        // длинного и не шина из кусков — T-слияние, а не двойная линия
+        let fan = layout(vec![
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
+            edge(&[(100.0, 50.0), (200.0, 50.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&fan).is_ok());
     }
 
     #[test]

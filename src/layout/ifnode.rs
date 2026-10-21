@@ -272,8 +272,11 @@ impl Ctx<'_> {
         let mut merge2 = y_bus;
         for (ri, row) in cases.chunks(2).enumerate() {
             if ri > 0 {
-                // шина ряда = слияние предыдущего ряда (одна линия, не две)
-                y_bus = merge2;
+                // Шина ряда питается от оси switch, а не от слияния прошлого
+                // ряда: слив и вход следующего ряда — разные высоты, иначе
+                // выходы кейсов ряда 1 читаются как вход кейсов ряда 2.
+                y_bus = merge2 + self.vg();
+                self.edge(&[(tx, merge2), (tx, y_bus)], false);
             }
             let top_c = y_bus + self.vg();
             let mut bottoms: Vec<(f64, f64, ColEnd)> = Vec::new();
@@ -328,6 +331,12 @@ impl Ctx<'_> {
             let hi = xs.iter().cloned().fold(f64::MIN, f64::max);
             if hi - lo > 1e-9 {
                 self.edge(&[(lo, merge2), (hi, merge2)], false);
+            }
+            // ствол на оси между колонками ряда: связь ромба с шиной
+            // следующего ряда. У нечётного хвоста на оси стоит его
+            // колонка — там ствол не рисуется.
+            if row.len() > 1 {
+                self.edge(&[(tx, y_bus), (tx, merge2)], false);
             }
         }
         // пустой кейс: рельса справа за сеткой, слияние на ствол
