@@ -529,3 +529,28 @@ fn if0_and_continuations_render_clean() {
     assert!(!svg.contains("dead"), "выключенный код на схеме: {svg}");
     assert!(svg.contains("printf(MSG)"), "живой код на схеме: {svg}");
 }
+
+/// Мягкий фикс по умолчанию спасает CR-только файл (старый Mac), а
+/// `--no-fix` возвращает строгий разбор и падает.
+#[cfg(feature = "autofix")]
+#[test]
+fn no_fix_flag_switches_to_strict() {
+    let d = tmp("no-fix");
+    let f = d.join("cr.c");
+    fs::write(
+        &f,
+        "int main(void)\r{\r// сумма\rint a = 1;\rprintf(\"%d\", a);\rreturn 0;\r}\r",
+    )
+    .unwrap();
+    let ok = run(&["--check", f.to_str().unwrap()]);
+    assert!(
+        ok.status.success(),
+        "фикс не спас вход: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let strict = run(&["--check", "--no-fix", f.to_str().unwrap()]);
+    assert_eq!(strict.status.code(), Some(1), "строгий режим должен падать");
+    assert!(run(&["--help"]).status.success());
+    let help = String::from_utf8_lossy(&run(&["--help"]).stdout).to_string();
+    assert!(help.contains("--no-fix"), "флаг не описан в --help");
+}

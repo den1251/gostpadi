@@ -226,34 +226,79 @@ fn join_parts(parts: &[Layout]) -> Layout {
 pub fn render_batch(schemes: Vec<(String, Vec<Node>)>, st: &Style) -> Vec<(String, Vec<String>)> {
     let normed: Vec<Sizes> = schemes.iter().map(|(_, n)| normalize(n, st)).collect();
     let sizes = uniform_sizes(&normed);
-    let laid: Vec<(String, Vec<Layout>)> = schemes
-        .into_iter()
-        .map(|(path, mut nodes)| {
-            let pages = if st.no_split {
-                // без порезки маркер ручного переноса рисовать нечем: лист один
-                strip_markers(&mut nodes);
-                vec![layout(&nodes, &sizes, st)]
-            } else {
-                split_scheme(nodes, &sizes, st)
-                    .iter()
-                    .map(|part| layout(part, &sizes, st))
-                    .collect()
-            };
-            (path, pages)
-        })
-        .collect();
-    // единый масштаб пачки: минимальный из постраничных вписываний
-    let s = laid
-        .iter()
-        .flat_map(|(_, pages)| pages)
-        .map(|l| fit_scale(l.bounds, st))
-        .fold(1.0_f64, f64::min);
+    // Масштаб пачки — минимум постраничных вписываний, и рез идёт под
+    // него: бюджет листа = А4/масштаб. При бюджете 1.0 лист режется на
+    // 672pt и рисуется на 0.22 — четыре пятых А4 пустые.
+    //
+    // Эталон реза (бюджет 1.0) — верхняя граница масштаба: заполнение не
+    // должно стоить кегля. У высокой узкой схемы слияние листов дало бы
+    // 0.22 вместо 1.0 — лучше лишний лист, чем нечитаемая схема. А у
+    // схемы, упёршейся в ширину листа, масштаб задан шириной и от числа
+    // листов не зависит — там заполнение бесплатно.
+    let ref_laid = laid_pages(&schemes, &sizes, st, 1.0);
+    let s_ref = batch_scale(&ref_laid, st);
+    let mut cut = st.split_min;
+    let mut laid = laid_pages(&schemes, &sizes, st, cut);
+    let mut s = batch_scale(&laid, st);
+    // масштаб выше бюджета реза — листы и так полные; ниже — лист
+    // упёрся в ширину и недозаполнен по высоте: перерезать под
+    // фактический масштаб (бюджет растёт, листов меньше)
+    for _ in 0..2 {
+        if s + 0.005 >= cut {
+            break;
+        }
+        cut = s;
+        laid = laid_pages(&schemes, &sizes, st, cut);
+        s = batch_scale(&laid, st);
+    }
+    if s < s_ref * 0.97 {
+        laid = ref_laid;
+        s = s_ref;
+    }
     laid.into_iter()
         .map(|(path, pages)| {
             let pages = pages.iter().map(|l| render_svg_at(l, st, s)).collect();
             (path, pages)
         })
         .collect()
+}
+
+/// Постраничная раскладка пачки с бюджетом листа А4/`scale`.
+fn laid_pages(
+    schemes: &[(String, Vec<Node>)],
+    sizes: &Sizes,
+    st: &Style,
+    scale: f64,
+) -> Vec<(String, Vec<Layout>)> {
+    let cut_st = Style {
+        split_scale: scale,
+        ..st.clone()
+    };
+    schemes
+        .iter()
+        .map(|(path, nodes)| {
+            let pages = if st.no_split {
+                // без порезки маркер ручного переноса рисовать нечем: лист один
+                let mut nodes = nodes.clone();
+                strip_markers(&mut nodes);
+                vec![layout(&nodes, sizes, &cut_st)]
+            } else {
+                split_scheme(nodes.clone(), sizes, &cut_st)
+                    .iter()
+                    .map(|part| layout(part, sizes, &cut_st))
+                    .collect()
+            };
+            (path.clone(), pages)
+        })
+        .collect()
+}
+
+/// Единый масштаб пачки: минимальное постраничное вписывание.
+fn batch_scale(laid: &[(String, Vec<Layout>)], st: &Style) -> f64 {
+    laid.iter()
+        .flat_map(|(_, pages)| pages)
+        .map(|l| fit_scale(l.bounds, st))
+        .fold(1.0_f64, f64::min)
 }
 
 /// Один вход -> страницы SVG.
@@ -546,5 +591,101 @@ mod tests {
         let schemes = parse_batch(&[("a.c".into(), src.into(), true)], &opts()).unwrap();
         let xml = &render_drawio_batch(schemes, &opts().style())[0].1;
         assert!(!xml.contains("перенос"), "маркер попал в draw.io");
+    }
+
+    /// Высота листа в pt (`height="…pt"` из шапки SVG).
+    fn page_height(svg: &str) -> f64 {
+        svg.split("height=\"")
+            .nth(1)
+            .and_then(|p| p.split("pt").next())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0)
+    }
+
+    /// Рез идёт на равные доли: «полный лист + огрызок» — это лишний
+    /// полупустой лист, а не экономия. Шестьдесят операторов при бюджете
+    /// листа 3054pt (масштаб 0.22) — два листа примерно по 2240, второй
+    /// не из двух фигур.
+    #[test]
+    fn cut_balances_pages_instead_of_full_plus_runt() {
+        let st = opts().style();
+        let text: String = (0..60).map(|i| format!("a = {i}\n")).collect();
+        let nodes = parse(&text, &st, "en").unwrap();
+        let sizes = normalize(&nodes, &st);
+        let cut_st = Style {
+            split_scale: 0.22,
+            ..st.clone()
+        };
+        let parts = split_scheme(nodes, &sizes, &cut_st);
+        let h: Vec<f64> = parts
+            .iter()
+            .map(|p| layout(p, &sizes, &st).bounds.3)
+            .collect();
+        let budget = (st.a4_h - 2.0 * st.page_pad) / 0.22;
+        assert_eq!(parts.len(), 2, "60 операторов — два листа: {h:?}");
+        assert!(h.iter().all(|&v| v <= budget), "лист не влез: {h:?}");
+        assert!(
+            h[1] >= 0.85 * h[0],
+            "второй лист — огрызок: {h:?} (нужны равные доли)"
+        );
+    }
+
+    /// Четыре лабы одним прогоном (запрос пользователя: меньше 32 листов
+    /// на отчёт). Лист режется под тот масштаб, с которым рисуется, —
+    /// иначе он ужимается до 0.22 и четыре пятых А4 пустуют.
+    #[test]
+    fn lab_batch_cuts_for_real_scale() {
+        let st = opts().style();
+        let mut schemes = Vec::new();
+        for n in 1..=4 {
+            let path = format!("{}/corpus/oap-lab{n}.c", env!("CARGO_MANIFEST_DIR"));
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (name, gvn) in c_to_gvn_functions(&text, "en").unwrap() {
+                schemes.push((format!("lab{n}#{name}"), parse(&gvn, &st, "en").unwrap()));
+            }
+        }
+        let normed: Vec<Sizes> = schemes.iter().map(|(_, n)| normalize(n, &st)).collect();
+        let sizes = uniform_sizes(&normed);
+        let out = render_batch(schemes.clone(), &st);
+        let sheets: usize = out.iter().map(|(_, pages)| pages.len()).sum();
+        assert!(sheets < 32, "листов {sheets}: экономии нет");
+        for (name, pages) in &out {
+            let s: f64 = scales(&pages[0])[0].parse().unwrap();
+            assert!(s >= 0.20, "{name}: масштаб {s} ниже пола 0.20");
+            for (i, svg) in pages.iter().enumerate() {
+                let h = page_height(svg);
+                // лист-продолжение заполнен по высоте, иначе рез был зря.
+                // Половина — предел, когда схема чуть выше листа: 1.15
+                // бюджета режется на два листа по 0.57, а на один лист
+                // масштаб упал бы ниже пола 0.20.
+                if pages.len() > 1 {
+                    assert!(
+                        h >= 0.5 * st.a4_h,
+                        "{name} лист {i}: {h:.0}pt из {:.0} — полупустой",
+                        st.a4_h
+                    );
+                }
+            }
+        }
+        // каждый лист — валидная ГОСТ-схема: линии не заходят на блоки,
+        // нет обрывов и второго входа
+        for (name, nodes) in &schemes {
+            let cut_st = Style {
+                split_scale: st.split_min,
+                ..st.clone()
+            };
+            let parts = split_scheme(nodes.clone(), &sizes, &cut_st);
+            for (i, part) in parts.iter().enumerate() {
+                let l = layout(part, &sizes, &st);
+                assert_eq!(
+                    crossings_ok(&l.shapes, &l.edges),
+                    Ok(()),
+                    "{name} лист {i}: линии заходят на блок"
+                );
+                assert!(overlaps_ok(&l.shapes), "{name} лист {i}: фигуры налезли");
+                assert!(dangling_ok(&l).is_ok(), "{name} лист {i}: обрыв линии");
+                assert!(single_entry_ok(&l), "{name} лист {i}: второй вход");
+            }
+        }
     }
 }

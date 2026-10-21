@@ -16,9 +16,15 @@ crate-type = ["rlib", "cdylib"]
 name = "gostpadi"
 path = "src/main.rs"
 
+[features]
+default = ["autofix"]
+# мягкая нормализация форматирования C: табы, CRLF, BOM, пробелы в директивах.
+# --no-default-features => строгий разбор (то же, что --no-fix на запуск).
+autofix = []
+
 [profile.release]
-opt-level = 3
-lto = "fat"
+opt-level = "z"
+lto = true
 codegen-units = 1
 panic = "abort"
 strip = true

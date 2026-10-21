@@ -1,7 +1,7 @@
 use super::column::rail_only;
 use super::ctx::{BreakAt, ColEnd, Ctx};
 use super::types::Label;
-use crate::ir::{Node, NodeKind, Stmt};
+use crate::ir::{Branch, Node, NodeKind, Stmt};
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Side {
@@ -10,32 +10,119 @@ pub(super) enum Side {
     Axis,
 }
 
-/// План колонок: (индекс ветки, сторона, ярус, абсцисса колонки).
-pub(super) fn build_plan(
-    idxs: &[usize],
-    base: f64,
-    pitch: f64,
-    tx0: f64,
-    single_left: bool,
-) -> Vec<(usize, Side, usize, f64)> {
-    let n = idxs.len();
-    let mut plan = Vec::new();
-    if single_left {
-        plan.push((idxs[0], Side::L, 0, tx0 - base));
-        return plan;
-    }
-    for (j, &bi) in idxs.iter().enumerate() {
+/// Ярусы колонок ромба: (индекс среди непустых веток, сторона, ярус).
+/// Канон методички (рис. 1–4): у ромба «да» (первая ветка) — вправо,
+/// «нет» — влево. У switch «да/нет» нет: кейсы читаются слева направо,
+/// средний стоит на оси (first_right = false).
+fn plan_slots(n: usize, first_right: bool) -> Vec<(usize, Side, usize)> {
+    let mut out = Vec::with_capacity(n);
+    for j in 0..n {
         if n % 2 == 1 && j == n / 2 {
-            plan.push((bi, Side::Axis, 0, tx0));
-        } else if j < n / 2 {
-            let t = n / 2 - 1 - j;
-            plan.push((bi, Side::L, t, tx0 - (base + t as f64 * pitch)));
-        } else if n > 0 {
-            let t = j - n / 2 - (n % 2);
-            plan.push((bi, Side::R, t, tx0 + base + t as f64 * pitch));
+            out.push((j, Side::Axis, 0));
+            continue;
+        }
+        let (mut side, t) = if j < n / 2 {
+            (Side::L, n / 2 - 1 - j)
+        } else {
+            (Side::R, j - n / 2 - (n % 2))
+        };
+        if first_right {
+            side = if side == Side::L { Side::R } else { Side::L };
+        }
+        out.push((j, side, t));
+    }
+    out
+}
+
+/// План колонок: (индекс ветки, сторона, ярус, абсцисса) и внешние
+/// края (влево, вправо) от оси. Абсциссы пакуются по фактическим
+/// полуширинам ветвей: колонка отстоит от ромба настолько, насколько
+/// её содержимое выходит ВНУТРЬ (к оси), и встаёт вплотную к соседу по
+/// своему внешнему краю. Общий на всю схему nhe раздувал каждую колонку
+/// до самой глубокой в схеме (ЛБ2: ветка из одной плитки уезжала на
+/// 524pt от оси), а симметричная оценка удваивала вынос вложенной ветки.
+/// hinge — от оси до ближнего края колонки (dw/2 + hgap).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn pack_plan(
+    idxs: &[usize],
+    ext: &[(f64, f64)],
+    narrow: &[bool],
+    hinge: f64,
+    side_x: f64,
+    colgap: f64,
+    tx0: f64,
+    first_right: bool,
+) -> (Vec<(usize, Side, usize, f64)>, f64, f64) {
+    let slots = plan_slots(idxs.len(), first_right);
+    // осевая колонка (средний кейс switch): соседи обходят её вынос
+    let axis = slots.iter().find(|s| s.1 == Side::Axis).map(|s| s.0);
+    let (al, ar) = axis.map(|j| ext[j]).unwrap_or((0.0, 0.0));
+    let mut off = vec![0.0f64; idxs.len()];
+    let (mut envl, mut envr) = (al, ar);
+    for side in [Side::L, Side::R] {
+        let mut order: Vec<usize> = (0..slots.len()).filter(|&j| slots[j].1 == side).collect();
+        order.sort_by_key(|&j| slots[j].2);
+        // ближний край первой колонки: вынос осевой или полоса hgap
+        let mut edge = if axis.is_some() {
+            (if side == Side::L { ar } else { al }) + colgap
+        } else {
+            hinge
+        }
+        .max(hinge);
+        for j in order {
+            let (l, r) = ext[j];
+            // колонка встаёт так, чтобы её внутренний вынос был свободен
+            let x = edge + if side == Side::L { r } else { l };
+            off[j] = if side == Side::L { -x } else { x };
+            if side == Side::L {
+                envl = envl.max(x + l);
+            } else {
+                envr = envr.max(x + r);
+            }
+            edge = x + if side == Side::L { l } else { r } + colgap;
         }
     }
-    plan
+    let plan = slots
+        .iter()
+        .map(|&(j, side, tier)| {
+            // ветка из одних break/continue плиток не рисует: колонка
+            // пустая, и её отлёт на hinge давал пустой прямоугольник.
+            // Рельса идёт сразу от боковой вершины ромба вниз.
+            let x = if narrow.get(j).copied().unwrap_or(false) {
+                let sgn = if side == Side::L { -1.0 } else { 1.0 };
+                tx0 + sgn * side_x
+            } else {
+                tx0 + off[j]
+            };
+            (idxs[j], side, tier, x)
+        })
+        .collect();
+    (plan, envl, envr)
+}
+
+/// Одна непустая ветка (вторая пуста): колонка одна, по канону «да»
+/// справа, «нет» слева; пустая ветка — сквозной проход по стволу.
+pub(super) fn single_plan(
+    bi: usize,
+    ext: (f64, f64),
+    narrow: bool,
+    hinge: f64,
+    side_x: f64,
+    tx0: f64,
+) -> (Vec<(usize, Side, usize, f64)>, f64, f64) {
+    let side = if bi == 0 { Side::R } else { Side::L };
+    if narrow {
+        let sgn = if side == Side::R { 1.0 } else { -1.0 };
+        return (vec![(bi, side, 0, tx0 + sgn * side_x)], side_x, side_x);
+    }
+    let (l, r) = ext;
+    if side == Side::R {
+        let x = hinge + l;
+        (vec![(bi, Side::R, 0, tx0 + x)], hinge.max(x - l), x + r)
+    } else {
+        let x = hinge + r;
+        (vec![(bi, Side::L, 0, tx0 - x)], x + l, hinge.max(x - r))
+    }
 }
 
 /// Каскад else-if: последняя ветка содержит ровно один вложенный
@@ -157,11 +244,137 @@ impl Ctx<'_> {
         self.edge(&[(lo, y_b), (hi, y_b)], false);
     }
 
+    /// Переключатель внутри колонки: кейсы сеткой по два в ряд. Веер
+    /// из пяти колонок (по одной на кейс) раздувал ветку до 600pt от
+    /// оси — а на А4 ширина и есть масштаб. Сетка держит ширину по двум
+    /// колонкам, растёт вниз рядами; ствол на оси ведёт от ряда к ряду,
+    /// слияние ряда — та же шина, что у веера.
+    fn sub_switch_grid(&mut self, nd: &Node, tx: f64, top: f64) -> (f64, ColEnd) {
+        let (dw, dh) = self.sizes["if"];
+        let cy = top + dh / 2.0;
+        self.add("if", tx, cy, &nd.text);
+        let y_b = cy + dh / 2.0;
+        let hinge = dw / 2.0 + self.st.hgap;
+        let empty: Vec<String> = nd
+            .branches
+            .iter()
+            .filter(|b| b.stmts.is_empty())
+            .map(|b| b.label.clone())
+            .collect();
+        let cases: Vec<&Branch> = nd.branches.iter().filter(|b| !b.stmts.is_empty()).collect();
+        let ext: Vec<(f64, f64)> = cases.iter().map(|b| self.extent_lr(&b.stmts)).collect();
+        let saved_direct = self.case_direct;
+        let br_mark = self.breaks.len();
+        self.switch_depth += 1;
+        self.case_direct = true;
+        let mut y_bus = y_b + self.vg();
+        self.edge(&[(tx, y_b), (tx, y_bus)], false);
+        let mut merge2 = y_bus;
+        for (ri, row) in cases.chunks(2).enumerate() {
+            if ri > 0 {
+                // шина ряда = слияние предыдущего ряда (одна линия, не две)
+                y_bus = merge2;
+            }
+            let top_c = y_bus + self.vg();
+            let mut bottoms: Vec<(f64, f64, ColEnd)> = Vec::new();
+            for (ci, b) in row.iter().enumerate() {
+                // нечётный хвост — на стволе: колонка продолжает ось,
+                // отдельная шина ей не нужна
+                let odd = row.len() == 1;
+                let left = !odd && ci == 0;
+                let k = ri * 2 + ci;
+                let x = if odd {
+                    tx
+                } else if left {
+                    tx - (hinge + ext[k].1)
+                } else {
+                    tx + (hinge + ext[k].0)
+                };
+                if odd {
+                    self.edge(&[(tx, y_bus), (tx, top_c)], !rail_only(&b.stmts));
+                } else {
+                    self.edge(&[(tx, y_bus), (x, y_bus)], false);
+                    self.edge(&[(x, y_bus), (x, top_c)], !rail_only(&b.stmts));
+                }
+                self.labels.push(Label {
+                    x: x + if left {
+                        -self.st.label_dx
+                    } else {
+                        self.st.label_dx
+                    },
+                    y: top_c - self.st.label_dy,
+                    text: b.label.clone(),
+                    ha: if left { "right" } else { "left" }.into(),
+                });
+                let (yend, end) = self.render_column(&b.stmts, x, top_c);
+                bottoms.push((x, yend, end));
+            }
+            // шина ряда: капли живых колонок и один горизонтальный
+            // отрезок через ствол; ниже неё стоят следующие ряды сетки
+            merge2 = bottoms
+                .iter()
+                .filter(|&&(_, _, e)| e == ColEnd::Flow)
+                .map(|&(_, y, _)| y)
+                .fold(y_bus + 2.0 * self.st.grid, f64::max)
+                + self.st.mgap;
+            let mut xs: Vec<f64> = vec![tx];
+            for &(x, y, e) in &bottoms {
+                if e == ColEnd::Flow {
+                    self.edge(&[(x, y), (x, merge2)], false);
+                    xs.push(x);
+                }
+            }
+            let lo = xs.iter().cloned().fold(f64::MAX, f64::min);
+            let hi = xs.iter().cloned().fold(f64::MIN, f64::max);
+            if hi - lo > 1e-9 {
+                self.edge(&[(lo, merge2), (hi, merge2)], false);
+            }
+        }
+        // пустой кейс: рельса справа за сеткой, слияние на ствол
+        if !empty.is_empty() {
+            let clear = ext.iter().map(|e| e.1).fold(hinge, f64::max) + hinge + self.st.grid;
+            let bx = tx + super::geometry::up(clear, self.st.grid);
+            for (k, lbl) in empty.iter().enumerate() {
+                let bxk = bx + k as f64 * 2.0 * self.st.grid;
+                self.edge(
+                    &[(tx + dw / 2.0, cy), (bxk, cy), (bxk, merge2), (tx, merge2)],
+                    false,
+                );
+                self.labels.push(Label {
+                    x: tx + dw / 2.0 + self.st.label_exit_dx,
+                    y: cy - self.st.label_dy,
+                    text: lbl.clone(),
+                    ha: "center".into(),
+                });
+            }
+        }
+        // рельсы break из вложенных if внутри кейсов: наружу за сетку
+        let nested: Vec<BreakAt> = self.breaks.drain(br_mark..).collect();
+        let outer = ext.iter().map(|e| e.1.max(e.0)).fold(hinge, f64::max) + hinge + self.st.grid;
+        for b in &nested {
+            let slot = self.break_slot;
+            self.break_slot += 1;
+            let sgn = if b.tx <= tx { -1.0 } else { 1.0 };
+            let rx = tx
+                + sgn * super::geometry::up(outer + slot as f64 * 2.0 * self.st.grid, self.st.grid);
+            self.edge(&[(b.tx, b.y), (rx, b.y), (rx, merge2), (tx, merge2)], false);
+        }
+        self.switch_depth -= 1;
+        self.case_direct = saved_direct;
+        (merge2, ColEnd::Flow)
+    }
+
     /// Вложенный ромб внутри колонки: под-колонки вокруг tx, слияние
     /// обратно на ось колонки. Возвращает (y продолжения, конец).
     /// Для switch (switch_var) — это ещё и scope: кейс-колонки напрямую
     /// растворяют break в слиянии, вложенные уходят рельсой к выходу.
     pub(super) fn sub_if(&mut self, nd: &Node, tx: f64, top: f64) -> (f64, ColEnd) {
+        // переключатель от четырёх кейсов — сеткой, не веером
+        if nd.switch_var.is_some()
+            && nd.branches.iter().filter(|b| !b.stmts.is_empty()).count() >= 4
+        {
+            return self.sub_switch_grid(nd, tx, top);
+        }
         let (dw, dh) = self.sizes["if"];
         let cy = top + dh / 2.0;
         self.add("if", tx, cy, &nd.text);
@@ -177,21 +390,51 @@ impl Ctx<'_> {
             .map(|b| b.label.clone())
             .collect();
         let n = idxs.len();
-        let sub = idxs
+        let ext: Vec<(f64, f64)> = idxs
             .iter()
-            .map(|&i| self.extent(&nd.branches[i].stmts))
-            .fold(self.colw / 2.0, f64::max);
-        let pitch2 = 2.0 * sub + self.st.colgap;
-        let base2 = dw / 2.0 + self.st.hgap + sub;
-        let comb = nd.switch_var.is_some() && n >= 2;
-        let top2 = cy + dh / 2.0 + self.st.vgap;
+            .map(|&i| self.extent_lr(&nd.branches[i].stmts))
+            .collect();
+        let hinge = dw / 2.0 + self.st.hgap;
+        let is_switch = nd.switch_var.is_some();
+        let scoped = is_switch || self.loop_depth > 0 || self.switch_depth > 0;
+        // ветка из одних break/continue ВНУТРИ scope: колонки нет, рельса
+        // идёт сразу от боковой вершины. Вне scope break рисуется плиткой,
+        // и такая колонка обязана быть нормальной ширины.
+        let narrow: Vec<bool> = if scoped {
+            idxs.iter()
+                .map(|&i| rail_only(&nd.branches[i].stmts))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let comb = is_switch && n >= 2;
+        let top2 = cy + dh / 2.0 + self.vg();
         let y_b = cy + dh / 2.0;
-        let plan = build_plan(&idxs, base2, pitch2, tx, n == 1 && !empty.is_empty());
+        let (plan, envl, envr) = if n == 1 && !empty.is_empty() {
+            single_plan(
+                idxs[0],
+                ext[0],
+                narrow.first().copied().unwrap_or(false),
+                hinge,
+                dw / 2.0,
+                tx,
+            )
+        } else {
+            pack_plan(
+                &idxs,
+                &ext,
+                &narrow,
+                hinge,
+                dw / 2.0,
+                self.st.colgap,
+                tx,
+                true,
+            )
+        };
+        let env = envl.max(envr);
         if comb {
             self.comb_line(&plan, y_b);
         }
-        let is_switch = nd.switch_var.is_some();
-        let scoped = is_switch || self.loop_depth > 0 || self.switch_depth > 0;
         let saved_direct = self.case_direct;
         let br_mark = self.breaks.len();
         if is_switch {
@@ -232,6 +475,14 @@ impl Ctx<'_> {
                 merge2 = merge2.max(y + self.st.mgap);
             }
         }
+        // Пустая ветка простого if — сквозной проход: «нет» идёт по стволу
+        // вниз и колонку не занимает (канон методички). Пустой кейс
+        // switch — своя ветвь, он уходит рельсой справа.
+        let trunk: Vec<String> = if is_switch { Vec::new() } else { empty.clone() };
+        let rails: Vec<String> = if is_switch { empty.clone() } else { Vec::new() };
+        if !trunk.is_empty() {
+            merge2 = merge2.max(y_b + 2.0 * self.st.grid);
+        }
         let cols: Vec<(f64, f64)> = bottoms
             .iter()
             .filter(|&&(_, _, end)| end == ColEnd::Flow)
@@ -242,12 +493,7 @@ impl Ctx<'_> {
         // за колонки switch, вниз к слиянию switch, T-стык на стволе
         if is_switch {
             let nested: Vec<BreakAt> = self.breaks.drain(br_mark..).collect();
-            let outer = plan
-                .iter()
-                .map(|&(.., txx)| (txx - tx).abs())
-                .fold(dw / 2.0 + 2.0 * self.st.grid, f64::max)
-                + sub
-                + self.st.grid;
+            let outer = env.max(dw / 2.0 + 2.0 * self.st.grid) + self.st.grid;
             for b in &nested {
                 let slot = self.break_slot;
                 self.break_slot += 1;
@@ -261,17 +507,25 @@ impl Ctx<'_> {
                 self.edge(&[(b.tx, b.y), (rx, b.y), (rx, merge2), (tx, merge2)], false);
             }
         }
-        if !empty.is_empty() {
+        if !trunk.is_empty() {
+            // ствол сквозного прохода: от нижней вершины до шины слияния
+            self.edge(&[(tx, y_b), (tx, merge2)], false);
+            for (k, lbl) in trunk.iter().enumerate() {
+                self.labels.push(Label {
+                    x: tx + self.st.label_axis_dx,
+                    y: y_b + (2.0 + k as f64) * self.st.grid,
+                    text: lbl.clone(),
+                    ha: "left".into(),
+                });
+            }
+        }
+        if !rails.is_empty() {
             merge2 = merge2.max(y_b + 2.0 * self.st.grid);
             // рельса жмётся к под-ромбу: пол — вершина + 2g, дальше —
-            // только правые под-колонки (зеркальный разлёт давал крюк)
-            let clear = plan
-                .iter()
-                .filter(|p| p.1 == Side::R)
-                .map(|p| (p.3 - tx) + self.nhe + self.st.grid)
-                .fold(dw / 2.0 + 2.0 * self.st.grid, f64::max);
+            // ровно за внешний край своих колонок
+            let clear = (env + self.st.grid).max(dw / 2.0 + 2.0 * self.st.grid);
             let bx2 = tx + super::geometry::up(clear, self.st.grid);
-            for (k, lbl) in empty.iter().enumerate() {
+            for (k, lbl) in rails.iter().enumerate() {
                 self.edge(
                     &[
                         vr,

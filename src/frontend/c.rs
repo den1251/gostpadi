@@ -648,6 +648,21 @@ fn strip_comments(src: &str) -> String {
 /// #ifndef / #if 1` считаются включёнными: заголовочные файлы студент
 /// underscope подключает осознанно.
 fn prepare(src: &str) -> String {
+    prepare_impl(src, crate::frontend::autofix_enabled())
+}
+
+fn prepare_impl(src: &str, autofix: bool) -> String {
+    #[cfg(feature = "autofix")]
+    let src = if autofix {
+        crate::frontend::fix::normalize(src)
+    } else {
+        src.to_string()
+    };
+    #[cfg(not(feature = "autofix"))]
+    let src = {
+        let _ = autofix;
+        src.to_string()
+    };
     let src = src.trim_start_matches('\u{feff}').to_string();
     // 1) склеить континуации директив (число строк сохраняется)
     let joined = join_continuations(&src).join("\n");
@@ -1621,5 +1636,52 @@ mod tests {
         let src = "int main(void) {\n#if 0\n    dead = 1;\n#endif\n    a = ;\n    return 0;\n}";
         let e = parse_c_to_nodes(src, "en").unwrap_err();
         assert_eq!(e.line, Some(5), "ошибка на строке 5: {:?}", e);
+    }
+
+    /// Кривое форматирование даёт ту же схему, что и аккуратное:
+    /// табы, CRLF, BOM, пробелы в директиве, `if(...)...else` в одну строку.
+    #[cfg(feature = "autofix")]
+    #[test]
+    fn autofix_ugly_matches_clean() {
+        let clean = "int main(void) {\n    int a;\n    scanf(\"%d\", &a);\n    if (a > 0) {\n        printf(\"плюс\");\n    } else {\n        printf(\"минус\");\n    }\n    return 0;\n}\n";
+        let ugly = "\u{feff}# include < stdio . h >\r\nint main(void)\r\n{\r\n\tint a;\r\n\tscanf(\"%d\",&a);\r\n\tif(a > 0){printf(\"плюс\");}else{printf(\"минус\");}\r\n\treturn 0;\r\n}\r\n";
+        let want = parse_c_to_nodes(clean, "ru").unwrap();
+        let got = parse_c_to_nodes(ugly, "ru").unwrap();
+        let kinds = |ns: &[Node]| ns.iter().map(|n| n.kind.clone()).collect::<Vec<_>>();
+        assert_eq!(kinds(&want), kinds(&got), "набор блоков изменился");
+        assert_eq!(want.len(), got.len());
+    }
+
+    /// Отступы в глубине (2 пробела/табы вперемешку) не меняют число блоков.
+    #[cfg(feature = "autofix")]
+    #[test]
+    fn autofix_mixed_indent_keeps_blocks() {
+        let clean = "int main(void) {\n    int s = 0;\n    for (int i = 0; i < 3; i++) {\n        s += i;\n    }\n    printf(\"%d\", s);\n    return 0;\n}\n";
+        let ugly = "int main(void){\n \t int s=0;\n\tfor(int i=0;i<3;i++){\n  \t\ts+=i;\n }printf(\"%d\",s);\nreturn 0;}\n";
+        let a = parse_c_to_nodes(clean, "en").unwrap();
+        let b = parse_c_to_nodes(ugly, "en").unwrap();
+        assert_eq!(a.len(), b.len(), "число блоков изменилось");
+        let kinds = |ns: &[Node]| ns.iter().map(|n| n.kind.clone()).collect::<Vec<_>>();
+        assert_eq!(kinds(&a), kinds(&b));
+    }
+
+    /// Строгий режим (--no-fix / --no-default-features) оставляет CR-только
+    /// файл как есть — а это не C: парсер на нём падает.
+    #[cfg(feature = "autofix")]
+    #[test]
+    fn strict_mode_keeps_cr_only_file_unparseable() {
+        let src = "int main(void)\r{\r// сумма\rint a = 1;\rprintf(\"%d\", a);\rreturn 0;\r}\r";
+        assert!(parse_c_to_nodes(src, "en").is_ok(), "фикс должен спасти");
+        let strict = prepare_impl(src, false);
+        assert!(strict.contains('\r'), "строгий режим не должен трогать CR");
+        let config = Config {
+            cpp_command: String::new(),
+            cpp_options: Vec::new(),
+            flavor: Flavor::StdC11,
+        };
+        assert!(
+            parse_preprocessed(&config, strict).is_err(),
+            "строгий разбор CR-только файла обязан падать"
+        );
     }
 }

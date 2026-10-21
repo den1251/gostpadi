@@ -1,7 +1,24 @@
 pub mod c;
+#[cfg(feature = "autofix")]
+pub mod fix;
 pub mod gvn;
 
 use crate::ir::{Branch, TileKind};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Мягкая нормализация входа: включена в сборке с feature `autofix` и до
+/// первого `--no-fix`. Флаг, а не поле Options: он один на процесс и не
+/// должен прорастать через пайплайн, serve и wasm.
+static AUTOFIX: AtomicBool = AtomicBool::new(true);
+
+/// `--no-fix` на один запуск: строгий разбор.
+pub fn set_autofix(on: bool) {
+    AUTOFIX.store(on, Ordering::Relaxed);
+}
+
+pub fn autofix_enabled() -> bool {
+    cfg!(feature = "autofix") && AUTOFIX.load(Ordering::Relaxed)
+}
 
 /// Маркер ручного переноса листа: комментарий `// перенос` в C и строка
 /// «перенос» в .gvn. В IR это conn-узел с этим текстом, в split — точка

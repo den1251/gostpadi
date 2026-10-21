@@ -22,12 +22,23 @@ fn is_piece(nd: &Node) -> bool {
 }
 
 /// Отрезать точку реза можно только перед простым блоком, «если» или
-/// циклом: последняя валидная ≤ limit. Якорь ПРЕДЫДУЩЕГО узла: лист
-/// доливается до последнего, что влез. j ∈ from..stop — и до, и после
-/// реза остаётся хотя бы пара узлов (лист не начинается огрызком); тело
-/// цикла режется «перед каждым оператором» — там from = 1.
-fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize, from: usize) -> Option<usize> {
-    let mut cut = None;
+/// циклом. Якорь ПРЕДЫДУЩЕГО узла — низ последнего узла листа: лист
+/// доливается до точки, ближайшей к `target` (высота остатка / число
+/// листов), но не ниже `cap` (низ листа минус кружок-выход). Цель, а не
+/// «последняя под потолком»: иначе лист выходит полным, а следующий —
+/// огрызком из двух фигур, и лишний полупустой лист всё равно есть.
+/// j ∈ from..stop — и до, и после реза остаётся хотя бы пара узлов (лист
+/// не начинается огрызком); тело цикла режется «перед каждым
+/// оператором» — там from = 1.
+fn auto_cut(
+    res: &Layout,
+    items: &[Node],
+    target: f64,
+    cap: f64,
+    stop: usize,
+    from: usize,
+) -> Option<usize> {
+    let mut cut: Option<(usize, f64)> = None;
     let mut first_valid = None;
     for j in from..stop {
         if !matches!(
@@ -43,14 +54,18 @@ fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize, from: usize) 
         if first_valid.is_none() {
             first_valid = Some(j);
         }
-        if a.y <= limit {
-            cut = Some(j);
+        if a.y > cap {
+            continue;
+        }
+        let d = (a.y - target).abs();
+        if cut.is_none_or(|(_, best)| d < best) {
+            cut = Some((j, d));
         }
     }
     // Схема из высоких структур (do-while с проверкой ввода) может не
-    // иметь ни одного якоря под лимитом — тогда любой рез лучше целого
+    // иметь ни одного якоря под потолком — тогда любой рез лучше целого
     // переростка в тысячу пунктов: берём самый первый валидный.
-    cut.or(first_valid)
+    cut.map(|(j, _)| j).or(first_valid)
 }
 
 /// Не влезает в А4 -> части, соединённые кружками «А», «Б», ...
@@ -61,15 +76,18 @@ fn auto_cut(res: &Layout, items: &[Node], limit: f64, stop: usize, from: usize) 
 /// ломает страницу даже если всё влезло: узел-маркер съедается, на его
 /// месте встаёт пара кружков одной буквы, как у автореза.
 pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<Node>> {
-    // поиск точки реза ведётся по нижним 88% страницы: ниже листать
-    // бессмысленно, выше — резать слишком рано
-    const CUT_SEARCH_FRAC: f64 = 0.97;
     let mut parts: Vec<Vec<Node>> = Vec::new();
     let mut li = 0usize;
     let n_letters = st.letters.chars().count();
     let letter = |li: usize| st.letters.chars().nth(li % n_letters).unwrap();
-    let limit = (st.a4_h - 2.0 * st.page_pad) / st.split_scale * CUT_SEARCH_FRAC;
+    // Бюджет листа — А4 при масштабе split_scale (пайплайн ставит сюда
+    // фактический масштаб пачки, см. render_batch): лист должен быть
+    // заполнен, а не порезан под 1.0 и нарисован на пятую часть.
     let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_scale;
+    // под последним узлом листа встаёт кружок-выход: якорь реза не может
+    // доходить до самого низа
+    let exit_room = st.vgap + 2.0 * st.conn_r;
+    let cap = budget - exit_room;
     loop {
         // маркер первым в остатке: резать перед ним нечего — глотаем, буква
         // не тратится (иначе вышел бы лист из одного кружка)
@@ -112,7 +130,7 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         }
         // цикл, чьё тело на лист не влезает, режем раньше прочих точек
         // реза: иначе поток перед ним уедет на пустоватый лист
-        if !fits && split_loop_body(&mut items, sizes, st, &res, limit) {
+        if !fits && split_loop_body(&mut items, sizes, st, &res, cap) {
             continue;
         }
         // короткий остаток делим, только если делить есть что — маркер или
@@ -127,7 +145,7 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         // влезает на лист целиком (с кружком-выходом); не влезает — сперва
         // авторез внутри головы, маркер ждёт следующей страницы
         let head_fits = marker.map_or(true, |f| {
-            layout(&items[..f], sizes, st).bounds.3 + st.vgap + 2.0 * st.conn_r <= budget
+            layout(&items[..f], sizes, st).bounds.3 + exit_room <= budget
         });
         let cut = if fits || (marker.is_some() && head_fits) {
             marker
@@ -136,7 +154,17 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
             let stop = marker
                 .unwrap_or(items.len())
                 .min(items.len().saturating_sub(1));
-            auto_cut(&res, &items, limit, stop, 2).or(marker)
+            // остаток делим на равные доли: n листов по rem/n, а не
+            // «полный лист + что осталось». Голова до маркера мерится
+            // отдельно — маркер и есть потолок.
+            let rem = if stop + 1 < items.len() {
+                layout(&items[..stop], sizes, st).bounds.3
+            } else {
+                res.bounds.3
+            };
+            let n = (rem / budget).ceil().max(1.0);
+            let target = rem / n - exit_room;
+            auto_cut(&res, &items, target, cap, stop, 2).or(marker)
         };
         let Some(cut) = cut else {
             // верхний уровень резать нечем — лист доливается целиком
@@ -289,7 +317,7 @@ fn split_loop_body(
     sizes: &Sizes,
     st: &Style,
     res: &Layout,
-    limit: f64,
+    cap: f64,
 ) -> bool {
     let (_, lh) = sizes["loop"];
     for i in 0..items.len() {
@@ -306,12 +334,15 @@ fn split_loop_body(
         // чанк меряется от низа прошлого узла: трапеция и оба в-гэпа
         // плюс запас на кружок-выход листа
         let approach = res.anchors.get(i.wrapping_sub(1)).map_or(0.0, |a| a.y);
-        let body_limit = limit - approach - lh - 2.0 * st.vgap;
+        let body_limit = cap - approach - lh - 2.0 * st.vgap;
         if body_limit <= 0.0 {
             continue;
         }
         let pres = layout(&pseudo, sizes, st);
-        let Some(j) = auto_cut(&pres, &pseudo, body_limit, pseudo.len(), 1) else {
+        // тело — тоже на равные доли: последний кусок не из одного шага
+        let n = (pres.bounds.3 / body_limit).ceil().max(1.0);
+        let target = pres.bounds.3 / n;
+        let Some(j) = auto_cut(&pres, &pseudo, target, body_limit, pseudo.len(), 1) else {
             continue;
         };
         let m = map[j];

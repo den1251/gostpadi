@@ -57,6 +57,8 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
     --lw=N          толщина линий и усиков стрелок (по умолчанию 1.0)
     --no-split      не резать длинную схему на листы: один лист, в А4
                     вписывает общий масштаб пачки (для вставки в отчёт)
+    --no-fix        строгий разбор: не выправлять табы, CRLF, BOM, пробелы
+                    в директивах (по умолчанию вход мягко нормализуется)
     --trim          в отчёт: SVG ровно по содержимому, размер в мм,
                     без листа А4 и без ужатия
     --drawio        файл draw.io (.drawio) с редактируемыми блоками
@@ -71,7 +73,7 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
         POST /export?mode=1|2 — SVG в мм / draw.io; ?lang=c|gvn.
 ";
 
-const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
+const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--no-fix] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
 
 /// Базовый путь результата схемы: ".../stem.svg" (суффиксы листов добавит
 /// page_path). Имя схемы несёт и вход, и функцию («1/main.c#main») —
@@ -193,6 +195,13 @@ fn main() {
             "--template" => template = true,
             "--check" => check = true,
             "--no-split" => no_split = true,
+            "--no-fix" => {
+                if cfg!(feature = "autofix") {
+                    gostpadi::frontend::set_autofix(false);
+                } else {
+                    eprintln!("--no-fix: мягкий фикс не вкомпилирован, разбор и так строгий");
+                }
+            }
             "--trim" => trim = true,
             "--drawio" => drawio = true,
             "serve" if inputs.is_empty() => serve_mode = true,

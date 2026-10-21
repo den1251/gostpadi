@@ -39,9 +39,9 @@ impl Ctx<'_> {
         cursor: f64,
     ) -> (Option<(f64, f64)>, f64) {
         if let Some(p) = prev {
-            self.edge(&[p, (0.0, cursor + self.st.vgap)], true);
+            self.edge(&[p, (0.0, cursor + self.vg())], true);
         }
-        let (merge, _) = self.sub_loop(nd, 0.0, cursor + self.st.vgap);
+        let (merge, _) = self.sub_loop(nd, 0.0, cursor + self.vg());
         self.anchors.push(Anchor { x: 0.0, y: merge });
         (Some((0.0, merge)), merge)
     }
@@ -65,7 +65,7 @@ impl Ctx<'_> {
         // коридор: шире половины трапеции и любого вложенного содержимого,
         // чтобы рельсы break/continue не задевали фигуры
         let top0 = if begins {
-            cy1 + lh / 2.0 + self.st.vgap
+            cy1 + lh / 2.0 + self.vg()
         } else {
             top
         };
@@ -86,7 +86,7 @@ impl Ctx<'_> {
         };
         self.case_direct = saved_direct;
         // нижняя трапеция: вход сверху (из тела), штатный выход вниз
-        let cy2 = yend + self.st.vgap + lh / 2.0;
+        let cy2 = yend + self.vg() + lh / 2.0;
         if ends {
             self.add("loop_end", tx, cy2, &num.to_string());
             if end != ColEnd::Return {
@@ -173,7 +173,7 @@ impl Ctx<'_> {
             // голова/середина: выход листа — кружок под телом (его рисует
             // следующий узел), обе рельсы сводятся на верх этого кружка:
             // вертикаль входа и сам кружок там уже есть
-            let y_exit = yend + self.st.vgap;
+            let y_exit = yend + self.vg();
             for b in breaks.iter().chain(conts.iter()) {
                 let slot = self.break_slot;
                 self.break_slot += 1;
@@ -189,8 +189,8 @@ impl Ctx<'_> {
     /// сливается с её границей), влево по коридору и горизонталь на y к оси.
     fn rail_to(&mut self, b: &BreakAt, rx: f64, y: f64, tx: f64) {
         let mut pts = vec![(b.tx, b.y)];
-        if b.from_tile && b.y + self.st.vgap < y {
-            pts.push((b.tx, b.y + self.st.vgap));
+        if b.from_tile && b.y + self.vg() < y {
+            pts.push((b.tx, b.y + self.vg()));
         }
         let by = pts[pts.len() - 1].1;
         pts.push((rx, by));

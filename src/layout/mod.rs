@@ -22,6 +22,22 @@ use ctx::Ctx;
 use crate::ir::{Node, NodeKind};
 use crate::style::Style;
 
+/// Межблочный вертикальный зазор раскладки в долях сетки. Style::vgap
+/// (3g) рассчитан на одиночную схему; на А4 пачка делит один масштаб, и
+/// 3g съедало восьмую часть высоты листа. 2g — по сетке, линии не
+/// слипаются (проверено глазами на листах ЛБ1–ЛБ4).
+pub(super) const VGAP_G: f64 = 2.0;
+
+pub(super) fn vgap(st: &Style) -> f64 {
+    VGAP_G * st.grid
+}
+
+impl Ctx<'_> {
+    pub(super) fn vg(&self) -> f64 {
+        vgap(self.st)
+    }
+}
+
 /// conn-узлы подряд прямо перед терминатором «конец» — входящие
 /// кружки с других листов: рисуются слева от «конца» на его высоте.
 fn leads_to_end(nodes: &[Node], mut j: usize) -> bool {
@@ -85,7 +101,7 @@ fn layout_inner(nodes: &[Node], sizes: &Sizes, st: &Style, guard: bool) -> Layou
                     cursor = cursor.max(py);
                 }
                 // T-точка слияния pend-рельс над «концом» (single-entry)
-                let my = cursor + st.vgap / 2.0;
+                let my = cursor + vgap(st) / 2.0;
                 let stop = if pend_here { Some(my) } else { None };
                 let (_, cur, sh_i) = c.simple(nd, prev, cursor, stop);
                 cursor = cur;
@@ -159,4 +175,3 @@ fn layout_inner(nodes: &[Node], sizes: &Sizes, st: &Style, guard: bool) -> Layou
     }
     l
 }
-

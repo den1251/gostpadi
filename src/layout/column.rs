@@ -13,10 +13,14 @@ pub(super) fn rail_only(items: &[Stmt]) -> bool {
             .all(|s| matches!(s, Stmt::Break | Stmt::Continue))
 }
 
-/// Полуширина содержимого колонки вокруг её оси: плитки, вложенные
-/// ромбы с их под-колонками, вложенные циклы с каналами возврата.
-pub(super) fn extent(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) -> f64 {
-    let mut he = colw / 2.0;
+/// Полуширины содержимого колонки вокруг её оси: (влево, вправо).
+/// Меряются по ФАКТИЧЕСКИМ фигурам колонки, а не по полной ширине
+/// плитки: колонка из одного printf ужимается до io/2, иначе каждая
+/// ветка резервировала под себя самую широкую плитку схемы (act 297), а
+/// симметричная оценка удваивала вынос ветки — и глубокая вложенность
+/// раздувала лист вдвое.
+pub(super) fn extent_lr(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) -> (f64, f64) {
+    let (mut hl, mut hr) = (0.0f64, 0.0f64);
     for it in items {
         match it {
             Stmt::Tile { kind, .. } => {
@@ -28,42 +32,97 @@ pub(super) fn extent(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) -> f6
                     TileKind::Io => "io",
                     TileKind::Act => "act",
                 };
-                he = he.max(sizes[key].0 / 2.0);
+                let e = sizes[key].0 / 2.0;
+                hl = hl.max(e);
+                hr = hr.max(e);
             }
-            Stmt::Return(_) => he = he.max(sizes["ret"].0 / 2.0),
+            Stmt::Return(_) => {
+                let e = sizes["ret"].0 / 2.0;
+                hl = hl.max(e);
+                hr = hr.max(e);
+            }
             Stmt::Node(nd) if nd.kind == NodeKind::Decision => {
                 let ne: Vec<&Branch> = nd.branches.iter().filter(|b| !b.stmts.is_empty()).collect();
-                let sub = ne
+                let ext: Vec<(f64, f64)> = ne
                     .iter()
-                    .map(|b| extent(sizes, st, colw, &b.stmts))
-                    .fold(colw / 2.0, f64::max);
-                let n = ne.len();
-                let tiers = n.saturating_sub(1) / 2;
-                let pitch2 = 2.0 * sub + st.colgap;
-                let dw2 = sizes["if"].0;
-                he = he
-                    .max(dw2 / 2.0 + st.hgap + sub + tiers as f64 * pitch2)
-                    .max(super::geometry::up(
-                        dw2 / 2.0 + 2.0 * st.grid + tiers as f64 * pitch2 + sub,
-                        st.grid,
-                    ));
+                    .map(|b| extent_lr(sizes, st, colw, &b.stmts))
+                    .collect();
+                let hinge = sizes["if"].0 / 2.0 + st.hgap;
+                let side_x = sizes["if"].0 / 2.0;
+                // рельсой ветка становится только внутри цикла/switch; в
+                // замер её берём широкой (консервативно — не уже рисунка)
+                let narrow: Vec<bool> = Vec::new();
+                let any_empty = nd.branches.iter().any(|b| b.stmts.is_empty());
+                // switch от четырёх кейсов рисуется сеткой (по два в ряд):
+                // его ширина — две колонки, а не веер по числу кейсов
+                let (el, er) = if nd.switch_var.is_some() && ext.len() >= 4 {
+                    let l = ext.iter().map(|e| e.0).fold(0.0, f64::max);
+                    let r = ext.iter().map(|e| e.1).fold(0.0, f64::max);
+                    (hinge + l + st.grid, hinge + r + st.grid)
+                } else if ext.len() == 1 && any_empty {
+                    let bi = nd
+                        .branches
+                        .iter()
+                        .position(|b| !b.stmts.is_empty())
+                        .unwrap_or(0);
+                    let (_, envl, envr) = super::ifnode::single_plan(
+                        bi,
+                        ext[0],
+                        narrow.first().copied().unwrap_or(false),
+                        hinge,
+                        side_x,
+                        0.0,
+                    );
+                    (envl, envr)
+                } else {
+                    let idxs: Vec<usize> = (0..ext.len()).collect();
+                    let (_, envl, envr) = super::ifnode::pack_plan(
+                        &idxs,
+                        &ext,
+                        &narrow,
+                        hinge,
+                        side_x,
+                        st.colgap,
+                        0.0,
+                        nd.switch_var.is_none(),
+                    );
+                    (envl, envr)
+                };
+                hl = hl.max(el);
+                hr = hr.max(er);
             }
             Stmt::Node(nd) => {
                 // цикл: две трапеции + тело
-                he = he.max(sizes["loop"].0 / 2.0);
+                let e = sizes["loop"].0 / 2.0;
+                hl = hl.max(e);
+                hr = hr.max(e);
                 if let Some(body) = &nd.body {
-                    he = he.max(extent(sizes, st, colw, body) + st.mgap);
+                    let (bl, br) = extent_lr(sizes, st, colw, body);
+                    hl = hl.max(bl + st.mgap);
+                    hr = hr.max(br + st.mgap);
                 }
             }
             Stmt::Break | Stmt::Continue => {}
         }
     }
-    he
+    // колонка без фигур (только break/continue) не схлопывается на ось:
+    // её вертикаль совпала бы со стволом
+    if hl <= 0.0 && hr <= 0.0 {
+        hl = colw / 2.0;
+        hr = colw / 2.0;
+    }
+    (hl, hr)
+}
+
+/// Симметричная полуширина: рельсы, каналы и общий nhe схемы.
+pub(super) fn extent(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) -> f64 {
+    let (l, r) = extent_lr(sizes, st, colw, items);
+    l.max(r)
 }
 
 impl Ctx<'_> {
-    pub(super) fn extent(&self, items: &[Stmt]) -> f64 {
-        extent(self.sizes, self.st, self.colw, items)
+    pub(super) fn extent_lr(&self, items: &[Stmt]) -> (f64, f64) {
+        extent_lr(self.sizes, self.st, self.colw, items)
     }
 
     /// Колонка на абсциссе tx: плитки и вложенные «если»/циклы.
@@ -74,7 +133,7 @@ impl Ctx<'_> {
         for it in items {
             let top = match prev_bottom {
                 None => top0,
-                Some(pb) => pb + self.st.vgap,
+                Some(pb) => pb + self.vg(),
             };
             match it {
                 // маркер ручного переноса внутри ветки: страниц внутри
@@ -172,7 +231,7 @@ impl Ctx<'_> {
     ) -> ((f64, f64), f64, usize) {
         let key = kind_name(&nd.kind);
         let (_, h) = self.sizes[key];
-        let cy = cursor + self.st.vgap + h / 2.0;
+        let cy = cursor + self.vg() + h / 2.0;
         let i = self.add(key, 0.0, cy, &nd.text);
         match (prev, merge_stop) {
             (Some(p), Some(my)) => self.edge(&[p, (0.0, my)], false),
