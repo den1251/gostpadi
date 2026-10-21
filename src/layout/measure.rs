@@ -79,7 +79,12 @@ fn put_items(sizes: &mut Sizes, st: &Style, items: &[Stmt]) {
 
 fn put_node(sizes: &mut Sizes, st: &Style, nd: &Node) {
     if nd.kind == NodeKind::Loop {
-        put(sizes, st, "loop", no_sentinel(&nd.loop_label()));
+        // номер цикла — часть заголовка верхней трапеции (он же стоит на
+        // нижней): по одному номеру и по ним сопоставляются. Берём
+        // представительную цифру: глубина 10+ не встречается, а ширина
+        // трапеции общая на пачку.
+        let label = format!("8. {}", no_sentinel(&nd.loop_label()));
+        put(sizes, st, "loop", &label);
     } else {
         put(sizes, st, kind_name(&nd.kind), &nd.text);
     }

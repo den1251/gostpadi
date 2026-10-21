@@ -1,7 +1,7 @@
 use super::ctx::{BreakAt, ColEnd, Ctx};
 use super::measure::{no_sentinel, HEAD, MID, TAIL};
-use super::types::{Anchor, Shape};
-use crate::ir::Node;
+use super::types::{Anchor, Label, Shape};
+use crate::ir::{LoopKind, Node, NodeKind, Stmt};
 
 /// Кусок разрезанного цикла: split заменяет цикл парой узлов того же
 /// kind, а режим помечает сентинелом в начале текста. Так лист N несёт
@@ -27,11 +27,40 @@ fn piece(text: &str) -> Piece {
     }
 }
 
+/// Сколько уровней циклов ещё вложено в тело: внешний цикл получает
+/// коридор на столько шагов дальше вложенного, сколько под ним уровней.
+/// Счёт по вложенности, а не глобальный: иначе коридор внешнего цикла
+/// уезжал за край листа (labfix-06: 425pt левее оси из-за слотов switch).
+fn nested_loops(items: &[Stmt]) -> usize {
+    items
+        .iter()
+        .map(|it| match it {
+            Stmt::Node(nd) if nd.kind == NodeKind::Loop => {
+                1 + nd.body.as_deref().map(nested_loops).unwrap_or(0)
+            }
+            Stmt::Node(nd) => nd
+                .branches
+                .iter()
+                .map(|b| nested_loops(&b.stmts))
+                .max()
+                .unwrap_or(0),
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Точка ухода рельсы на коридор. `by` — высота горизонтали: для
+/// плитки на полшага ниже её низа, иначе верх пустой колонки.
+struct Rail {
+    sx: f64,
+    sy: f64,
+    by: f64,
+}
+
 impl Ctx<'_> {
     /// Цикл на основной линии: entry-стрелка сверху, две трапеции
     /// (loop_begin сверху, loop_end снизу), тело между ними.
-    /// Порт гост-паттерна 3.4: обратная связь не рисуется — совпадение
-    /// номеров на трапециях связывает begin/end неявно.
     pub(super) fn loop_top(
         &mut self,
         nd: &Node,
@@ -56,12 +85,22 @@ impl Ctx<'_> {
         // продолжение живут на соседних листах, их связывает кружок
         let begins = matches!(p, Piece::Full | Piece::Head);
         let ends = matches!(p, Piece::Full | Piece::Tail);
+        let num = self.loop_depth + 1;
+        // коридоры этого цикла: база — число вложенных уровней, счётчики
+        // сторон свои (вложенный цикл вернёт родительские значения)
+        let saved_lanes = (self.lane_base, self.lane_left, self.lane_right);
+        self.lane_base = nd.body.as_deref().map(nested_loops).unwrap_or(0);
+        self.lane_left = 0;
+        self.lane_right = 0;
         let cy1 = top + lh / 2.0;
         if begins {
-            self.add("loop_begin", tx, cy1, no_sentinel(&nd.loop_label()));
+            // Номер на обеих трапециях: по нему верх и низ цикла
+            // сопоставляются на листе (раньше низ нёс голый номер, а
+            // верх — условие без номера).
+            let label = format!("{num}. {}", no_sentinel(&nd.loop_label()));
+            self.add("loop_begin", tx, cy1, &label);
         }
         self.loop_depth += 1;
-        let num = self.loop_depth;
         // коридор: шире половины трапеции и любого вложенного содержимого,
         // чтобы рельсы break/continue не задевали фигуры
         let top0 = if begins {
@@ -137,91 +176,278 @@ impl Ctx<'_> {
         };
         let breaks: Vec<BreakAt> = self.breaks.drain(mark..).collect();
         let conts: Vec<BreakAt> = self.continues.drain(mark_c..).collect();
-        // Рельсы break/continue: вниз мимо loop_end, T-стык на продолжении.
-        //
-        // Прямой спуск из плитки, стоящей вне трапеции, — самый короткий
-        // путь без ступеньки: колонка b.tx уже своя ось. Но только если
-        // на вертикали ниже нет чужих фигур и нет другой рельсы той же
-        // стороны — её первая горизонталь шла бы через эту колонку.
-        // Остальные уходят в коридор своей стороны: правая колонка —
-        // вправо, иначе её горизонталь режет ствол цикла. Колонка без
-        // плиток (только break/continue) выходит сразу в коридор:
-        // выходить из неё неоткуда, вертикаль на её оси пустая.
         if ends {
-            // Общая высота слияния рельс: continue уходил на середину
-            // выхода loop_end, break — на merge ниже. Разные концы давали
-            // частичное перекрытие интервалов, и вертикаль одной рельсы
-            // неизбежно резала горизонталь другой (labfix-14: пять рельс
-            // в левом поле, 8 X). Одна высота убирает и разницу, и X.
+            // break выходит из цикла: ниже loop_end, на продолжение.
+            // continue — следующая итерация: входит в БОК loop_end,
+            // выше его низа. Разные высоты, разные горизонтали.
             let yj = (cy2 + lh / 2.0 + merge) * 0.5;
-            // Прямой спуск из плитки, стоящей вне трапеции, — самый
-            // короткий путь и без ступеньки; такие рельсы занимают свою
-            // колонку и в коридоре слотов не участвуют.
-            let mut rails: Vec<&BreakAt> = Vec::new();
-            let all: Vec<&BreakAt> = breaks.iter().chain(conts.iter()).collect();
-            for b in &breaks {
-                let free = (b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0)
-                    && !(b.from_tile && blocked(b.tx, b.y, yj));
-                // Прямой спуск идёт по своей колонке внутри тела; рельса
-                // той же стороны идёт в коридор снаружи и её первая
-                // горизонталь режет эту колонку (oap-lab2: break прямо из
-                // плитки и break из пустой ветки на одной стороне).
-                let side = b.tx > tx;
-                let same_side = all
-                    .iter()
-                    .any(|r| !std::ptr::eq(*r, b) && (r.tx > tx) == side);
-                if b.from_tile && free && !same_side {
-                    self.edge(&[(b.tx, b.y), (b.tx, yj), (tx, yj)], false);
-                } else {
-                    rails.push(b);
-                }
+            self.rails_to_end(
+                &breaks, &conts, tx, lw, cy2, yj, body_left, body_right, &blocked,
+            );
+            // Обратная связь цикла — только когда обе трапеции на листе
+            // и ни одна рельса не заняла выбранную сторону. Иначе стрелка
+            // пересекала бы их вертикали: номер на обеих трапециях и так
+            // связывает верх с низом.
+            if begins && end != ColEnd::Return {
+                let left_busy = !breaks.iter().chain(conts.iter()).all(|b| b.tx > tx);
+                let right_busy = !breaks.iter().chain(conts.iter()).all(|b| b.tx <= tx);
+                self.loop_back(
+                    nd, tx, lw, cy1, cy2, top0, body_left, body_right, left_busy, right_busy,
+                );
             }
-            rails.extend(conts.iter());
-            self.rail_set(&mut rails, yj, tx, body_left, body_right);
         } else {
             // голова/середина: выход листа — кружок под телом. Рельсы
             // сводятся на полшага ниже тела: на в-гэпе стоит верх
             // следующего блока, и горизонталь ложилась на его кромку
             // (labfix-09: рельса break по верхней грани io).
+            //
+            // Нижней трапеции на листе нет (голова или середина разреза):
+            // continue и break оба уходят на следующий лист, но разными
+            // высотами и с подписями — до бока loop_end на этом листе
+            // не дотянуться.
             let y_exit = yend + self.st.grid;
-            let mut rails: Vec<&BreakAt> = breaks.iter().chain(conts.iter()).collect();
-            self.rail_set(&mut rails, y_exit, tx, body_left, body_right);
+            self.rails_to_page(&breaks, &conts, tx, y_exit, body_left, body_right);
         }
         self.loop_depth -= 1;
+        (self.lane_base, self.lane_left, self.lane_right) = saved_lanes;
         (merge, ColEnd::Flow)
     }
 
-    /// Рельсы уходят в коридор своей стороны (правая колонка — вправо:
-    /// иначе её первая горизонталь режет ствол цикла). Верхняя рельса
-    /// ставится дальше от оси: её вертикаль не пересекает горизонтали
-    /// нижних, а те оканчиваются на её высоте — T-стык.
-    fn rail_set(&mut self, rails: &mut [&BreakAt], y: f64, tx: f64, left: f64, right: f64) {
-        rails.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal));
-        for b in rails.iter() {
-            let slot = self.break_slot;
-            self.break_slot += 1;
-            let rx = if b.tx > tx {
-                right + self.st.grid * (slot as f64 + 1.0)
-            } else {
-                left - self.st.grid * (slot as f64 + 1.0)
-            };
-            self.rail_to(b, rx, y, tx);
+    /// Рельсы стороны `right` сходятся в один коридор. Отрезки вертикали
+    /// стыкуются T-узлами: у каждой рельсы свой отрезок, а не наложение
+    /// хвостов (раньше все горизонтали шли до оси на одной высоте).
+    fn rail_corridor(&mut self, mut items: Vec<Rail>, lane: f64, bottom: f64, right: bool) {
+        items.sort_by(|a, b| {
+            b.by.partial_cmp(&a.by)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.sx.partial_cmp(&b.sx).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        items.dedup_by(|a, b| a.sx == b.sx && a.sy == b.sy);
+        let mut next = bottom;
+        let mut i = 0;
+        while i < items.len() {
+            let by = items[i].by;
+            let mut j = i;
+            let mut far = items[i].sx;
+            while j < items.len() && (items[j].by - by).abs() < 1e-9 {
+                let r = &items[j];
+                // выход из плитки: вниз на полшага, иначе горизонталь
+                // ложится на нижнюю грань плитки
+                if by > r.sy + 1e-9 {
+                    self.edge(&[(r.sx, r.sy), (r.sx, by)], false);
+                }
+                // одна горизонталь на все рельсы одной высоты: она
+                // начинается от крайней (дальней от коридора) и накрывает
+                // все капли — хвосты не накладываются друг на друга
+                far = if right { far.min(r.sx) } else { far.max(r.sx) };
+                j += 1;
+            }
+            self.edge(&[(far, by), (lane, by)], false);
+            if by < next - 1e-9 {
+                self.edge(&[(lane, by), (lane, next)], false);
+            }
+            next = by;
+            i = j;
         }
     }
 
-    /// Рельса break/continue: из плитки вниз на полшага сетки (иначе
-    /// горизонталь ложится на нижнюю грань плитки), влево по коридору и
-    /// горизонталь на y к оси. Полшага, а не в-гэп: в-гэп от низа тела
-    /// приходится ровно на верхнюю грань loop_end (labfix-05).
-    fn rail_to(&mut self, b: &BreakAt, rx: f64, y: f64, tx: f64) {
-        let mut pts = vec![(b.tx, b.y)];
-        if b.from_tile && b.y + self.st.grid <= y {
-            pts.push((b.tx, b.y + self.st.grid));
+    /// Следующий коридор стороны. Индекс = база вложенности + счётчик
+    /// стороны: внешний цикл всегда на шаг дальше вложенного, соседи
+    /// начинают счёт заново (их полосы не пересекаются по высоте).
+    fn lane(&mut self, right: bool, left: f64, right_edge: f64) -> f64 {
+        let local = if right {
+            let l = self.lane_right;
+            self.lane_right += 1;
+            l
+        } else {
+            let l = self.lane_left;
+            self.lane_left += 1;
+            l
+        };
+        let idx = self.lane_base + local;
+        if right {
+            right_edge + self.st.grid * (idx as f64 + 1.0)
+        } else {
+            left - self.st.grid * (idx as f64 + 1.0)
         }
-        let by = pts[pts.len() - 1].1;
-        pts.push((rx, by));
-        pts.push((rx, y));
-        pts.push((tx, y));
-        self.edge(&pts, false);
+    }
+
+    fn rail(&self, b: &BreakAt) -> Rail {
+        let by = if b.from_tile { b.y + self.st.grid } else { b.y };
+        Rail {
+            sx: b.tx,
+            sy: b.y,
+            by,
+        }
+    }
+
+    /// Подпись рельсы снаружи коридора. Центрирование, а не start/end:
+    /// границы листа считают полуширину подписи, и длинное слово не
+    /// срезается краем viewBox.
+    fn rail_label(&mut self, lane: f64, right: bool, y: f64, text: &str) {
+        let half = text.chars().count() as f64 * self.st.char_w / 2.0;
+        let x = if right {
+            lane + self.st.label_exit_dx + half
+        } else {
+            lane - self.st.label_exit_dx - half
+        };
+        self.labels.push(Label {
+            x,
+            y: y - self.st.label_dy,
+            text: text.into(),
+            ha: "center".into(),
+        });
+    }
+
+    /// Лист с нижней трапецией: continue входит в её бок (следующая
+    /// итерация), break проходит ниже и вливается в продолжение после
+    /// цикла.
+    #[allow(clippy::too_many_arguments)]
+    fn rails_to_end(
+        &mut self,
+        breaks: &[BreakAt],
+        conts: &[BreakAt],
+        tx: f64,
+        lw: f64,
+        cy2: f64,
+        yj: f64,
+        left: f64,
+        right: f64,
+        blocked: &impl Fn(f64, f64, f64) -> bool,
+    ) {
+        let cont_y = cy2 - self.st.grid;
+        for right_side in [false, true] {
+            let bs: Vec<&BreakAt> = breaks
+                .iter()
+                .filter(|b| (b.tx > tx) == right_side)
+                .collect();
+            let cs: Vec<&BreakAt> = conts.iter().filter(|b| (b.tx > tx) == right_side).collect();
+            if bs.is_empty() && cs.is_empty() {
+                continue;
+            }
+            // Одинокая break-рельса из плитки вне трапеции: прямой спуск
+            // по своей колонке короче коридора и не с чем пересекаться.
+            if cs.is_empty() && bs.len() == 1 {
+                let b = bs[0];
+                let outside = b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0;
+                if b.from_tile && outside && !blocked(b.tx, b.y, yj) {
+                    let r = self.rail(b);
+                    self.edge(&[(r.sx, r.sy), (r.sx, yj), (tx, yj)], false);
+                    continue;
+                }
+            }
+            let lane = self.lane(right_side, left, right);
+            let bottom = if bs.is_empty() { cont_y } else { yj };
+            let items: Vec<Rail> = bs.iter().chain(cs.iter()).map(|b| self.rail(b)).collect();
+            self.rail_corridor(items, lane, bottom, right_side);
+            if !cs.is_empty() {
+                let x = if right_side {
+                    tx + lw / 2.0
+                } else {
+                    tx - lw / 2.0
+                };
+                self.edge(&[(lane, cont_y), (x, cont_y)], false);
+            }
+            if !bs.is_empty() {
+                self.edge(&[(lane, yj), (tx, yj)], false);
+            }
+            // В одном коридоре два смысла — подписи у выходов. Подписи
+            // снаружи коридора: между рельсой и фигурой места нет.
+            if !bs.is_empty() && !cs.is_empty() {
+                for (y, text) in [(cont_y, "continue"), (yj, "break")] {
+                    self.rail_label(lane, right_side, y, text);
+                }
+            }
+        }
+    }
+
+    /// Голова/середина разрезанного цикла: низ трапеции на другом листе.
+    /// Обе рельсы уходят на выход листа, но на разных высотах и с
+    /// подписями: смысл виден, даже когда геометрия листа одна.
+    fn rails_to_page(
+        &mut self,
+        breaks: &[BreakAt],
+        conts: &[BreakAt],
+        tx: f64,
+        y_exit: f64,
+        left: f64,
+        right: f64,
+    ) {
+        for right_side in [false, true] {
+            let bs: Vec<&BreakAt> = breaks
+                .iter()
+                .filter(|b| (b.tx > tx) == right_side)
+                .collect();
+            let cs: Vec<&BreakAt> = conts.iter().filter(|b| (b.tx > tx) == right_side).collect();
+            if bs.is_empty() && cs.is_empty() {
+                continue;
+            }
+            let lane = self.lane(right_side, left, right);
+            // высота ровно на сетке совпала бы с by рельсы (низ последней
+            // плитки + полшага): горизонталь рельсы и общий хвост легли бы
+            // друг на друга. Полшага в сторону от узлов сетки — и общий
+            // отрезок рельсы не пересекает: хвост ниже всех капель.
+            let both = !bs.is_empty() && !cs.is_empty();
+            let cont_y = if both {
+                y_exit - self.st.grid * 0.5
+            } else {
+                y_exit + self.st.grid * 0.5
+            };
+            let brk_y = y_exit + self.st.grid * 0.5;
+            let bottom = if bs.is_empty() { cont_y } else { brk_y };
+            let items: Vec<Rail> = bs.iter().chain(cs.iter()).map(|b| self.rail(b)).collect();
+            self.rail_corridor(items, lane, bottom, right_side);
+            // На листе без нижней трапеции геометрия выхода одна (кружок
+            // следующего листа), поэтому смысл несёт подпись — и когда
+            // рельса одна, а не только при обоих смыслах в коридоре.
+            if !cs.is_empty() {
+                self.edge(&[(lane, cont_y), (tx, cont_y)], false);
+                self.rail_label(lane, right_side, cont_y, "continue");
+            }
+            if !bs.is_empty() {
+                self.edge(&[(lane, brk_y), (tx, brk_y)], false);
+                self.rail_label(lane, right_side, brk_y, "break");
+            }
+        }
+    }
+
+    /// Обратная связь цикла: из бока loop_end вверх, на выбранной
+    /// свободной стороне (без рельс), к голове. while/for возвращаются
+    /// в верхнюю трапецию (проверка условия), do-while — к входу тела:
+    /// тело выполняется до проверки.
+    #[allow(clippy::too_many_arguments)]
+    fn loop_back(
+        &mut self,
+        nd: &Node,
+        tx: f64,
+        lw: f64,
+        cy1: f64,
+        cy2: f64,
+        top0: f64,
+        left: f64,
+        right: f64,
+        left_busy: bool,
+        right_busy: bool,
+    ) {
+        let right_side = if !left_busy {
+            false
+        } else if !right_busy {
+            true
+        } else {
+            return;
+        };
+        let lane = self.lane(right_side, left, right);
+        let x = if right_side {
+            tx + lw / 2.0
+        } else {
+            tx - lw / 2.0
+        };
+        let to_body = nd.loop_kind == Some(LoopKind::DoWhile) && nd.body.is_some();
+        if to_body {
+            let ty = top0 - self.st.grid;
+            self.edge(&[(x, cy2), (lane, cy2), (lane, ty), (tx, ty)], true);
+        } else {
+            self.edge(&[(x, cy2), (lane, cy2), (lane, cy1), (x, cy1)], true);
+        }
     }
 }

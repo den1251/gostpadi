@@ -89,6 +89,45 @@ pub fn edges_cross_ok(l: &Layout) -> Result<(), String> {
     Ok(())
 }
 
+/// Два разных ребра не идут по одной прямой с наложением: хвосты рельс
+/// рисовались каждый до оси, и на одной высоте ложились друг на друга.
+/// Касание концом (T-стык, общий угол) — не наложение: пересечение
+/// нулевой длины.
+pub fn collinear_overlap_ok(l: &Layout) -> Result<(), String> {
+    const TOL: f64 = 0.01;
+    for (i, ea) in l.edges.iter().enumerate() {
+        for eb in l.edges.iter().skip(i + 1) {
+            for pa in ea.points.windows(2) {
+                for pb in eb.points.windows(2) {
+                    let (a1, a2, b1, b2) = (pa[0], pa[1], pb[0], pb[1]);
+                    let ah = (a1.1 - a2.1).abs() < 1e-9;
+                    let av = (a1.0 - a2.0).abs() < 1e-9;
+                    let bh = (b1.1 - b2.1).abs() < 1e-9;
+                    let bv = (b1.0 - b2.0).abs() < 1e-9;
+                    let (o, same) = if ah && bh && (a1.1 - b1.1).abs() < TOL {
+                        let (a, b) = (a1.0.min(a2.0), a1.0.max(a2.0));
+                        let (c, d) = (b1.0.min(b2.0), b1.0.max(b2.0));
+                        (b.min(d) - a.max(c), a1.1)
+                    } else if av && bv && (a1.0 - b1.0).abs() < TOL {
+                        let (a, b) = (a1.1.min(a2.1), a1.1.max(a2.1));
+                        let (c, d) = (b1.1.min(b2.1), b1.1.max(b2.1));
+                        (b.min(d) - a.max(c), a1.0)
+                    } else {
+                        continue;
+                    };
+                    if o > TOL {
+                        return Err(format!(
+                            "ребро #{i} {:?}-{:?} наложено на ребро {:?}-{:?} (общая координата {same:.2}, перекрытие {o:.2})",
+                            a1, a2, b1, b2
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Плоские участки контура по сторонам bbox: (верх, низ, лево, право).
 /// None — сторона не прямая (ромб, круг) либо её нет (скос
 /// параллелограмма), и линия «на кромке» там не читается гранью.
@@ -355,6 +394,26 @@ mod tests {
             edge(&[(100.0, 50.0), (300.0, 50.0)]),
         ]);
         assert!(edges_cross_ok(&l).is_ok(), "наложение — отдельный класс");
+    }
+
+    #[test]
+    fn collinear_overlap_is_its_own_defect() {
+        let l = layout(vec![
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
+            edge(&[(100.0, 50.0), (300.0, 50.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&l).is_err(), "общий отрезок дважды");
+        // касание концом и T-стык — не наложение
+        let touch = layout(vec![
+            edge(&[(0.0, 50.0), (100.0, 50.0)]),
+            edge(&[(100.0, 50.0), (200.0, 50.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&touch).is_ok());
+        let t = layout(vec![
+            edge(&[(0.0, 50.0), (200.0, 50.0)]),
+            edge(&[(100.0, 50.0), (100.0, 100.0)]),
+        ]);
+        assert!(collinear_overlap_ok(&t).is_ok());
     }
 
     #[test]

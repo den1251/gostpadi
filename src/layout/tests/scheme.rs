@@ -4,8 +4,8 @@
 use super::*;
 use crate::layout::measure::{HEAD, MID, TAIL};
 use crate::layout::{
-    crossings_ok, dangling_ok, layout, measure, normalize, overlaps_ok, single_entry_ok,
-    split_scheme,
+    collinear_overlap_ok, crossings_ok, dangling_ok, layout, measure, normalize, overlaps_ok,
+    single_entry_ok, split_scheme,
 };
 
 #[test]
@@ -60,21 +60,25 @@ fn loop_is_two_hexagons() {
         loop_node("while i < 5", vec![s("i = i + 1")]),
         node(NodeKind::Term, "конец"),
     ];
-    let st = Style::default();
-    let (lw, lh) = measure(&st, "loop", "while i < 5");
     let l = lay(&nodes);
-    let want = (0.5 * lh).min(0.25 * lw);
     let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
-    assert_eq!(lb.lines, vec!["while i < 5".to_string()]);
+    assert_eq!(lb.lines, vec!["1. while i < 5".to_string()]);
     assert!(lb.skew > 0.0, "срез верхних углов у loop_begin");
-    assert_eq!(lb.skew, want, "Δ = min(0.5*h, 0.25*w)");
+    assert_eq!(
+        lb.skew,
+        (0.5 * lb.h).min(0.25 * lb.w),
+        "Δ = min(0.5*h, 0.25*w)"
+    );
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     assert_eq!(
         le.lines,
         vec!["1".to_string()],
-        "номер цикла на нижнем шестиугольнике"
+        "номер цикла на нижнем шестиугольнике — тот же, что в заголовке"
     );
-    assert_eq!(le.skew, want, "loop_end — зеркальный срез той же величины");
+    assert_eq!(
+        le.skew, lb.skew,
+        "loop_end — зеркальный срез той же величины"
+    );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(overlaps_ok(&l.shapes));
     assert!(single_entry_ok(&l));
@@ -111,9 +115,9 @@ fn loop_begin_shows_keyword() {
         .filter(|sh| sh.kind == "loop_begin")
         .flat_map(|sh| sh.lines.clone())
         .collect();
-    assert!(begins.iter().any(|t| t == "while i < 5"), "{begins:?}");
+    assert!(begins.iter().any(|t| t == "1. while i < 5"), "{begins:?}");
     assert!(
-        begins.iter().any(|t| t == "for i = 0; i < 10; i++"),
+        begins.iter().any(|t| t == "1. for i = 0; i < 10; i++"),
         "{begins:?}"
     );
 }
@@ -136,8 +140,8 @@ fn head_loop_no_end_trapezoid() {
         .expect("верхняя трапеция");
     assert_eq!(
         lb.lines,
-        vec!["while i < 5".to_string()],
-        "сентинел в текст не протекает"
+        vec!["1. while i < 5".to_string()],
+        "сентинел в текст не протекает, номер цикла на месте"
     );
     assert!(
         !l.shapes.iter().any(|sh| sh.kind == "loop_end"),
@@ -212,7 +216,12 @@ fn break_rail_on_head_page_exits_via_letter() {
     let rail = l
         .edges
         .iter()
-        .find(|e| !e.arrow && e.points.len() >= 4)
+        .find(|e| {
+            !e.arrow
+                && e.points
+                    .last()
+                    .is_some_and(|p| p.0 == conn.cx && p.1 < conn.cy)
+        })
         .expect("рельса в коридоре");
     assert_eq!(
         rail.points.last().map(|p| p.0),
@@ -359,27 +368,39 @@ fn break_rail_under_trapezoid_uses_corridor() {
         loop_node("while i < 5", vec![s("a = 1"), sbrk()]),
         node(NodeKind::Term, "конец"),
     ];
-    let st = Style::default();
-    let (lw, _) = measure(&st, "loop", "while i < 5");
     let l = lay(&nodes);
+    let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
+    let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     // плитка стоит на оси цикла, то есть прямо под трапецией слияния:
     // рельса обязана уйти в коридор левее, иначе проткнёт трапецию
     let rail = l
         .edges
         .iter()
-        .find(|e| e.points.iter().any(|p| p.0 < -lw / 2.0))
+        .find(|e| e.points.iter().any(|p| p.0 < -lb.w / 2.0))
         .expect("рельса ушла в левый коридор мимо трапеции");
     let leftmost = rail.points.iter().map(|p| p.0).fold(f64::MAX, f64::min);
     assert!(
-        leftmost < -lw / 2.0,
+        leftmost < -lb.w / 2.0,
         "рельса заходит левее половины ширины трапеции: {leftmost} против {}",
-        -lw / 2.0
+        -lb.w / 2.0
     );
-    // коридор значит лишний изгиб: вниз, влево, вниз, вправо
+    // коридор: вниз из плитки, влево, вниз мимо трапеции, вправо на ось
+    let trunk = l
+        .edges
+        .iter()
+        .find(|e| {
+            let p = e.points.last().unwrap();
+            !e.arrow
+                && p.0 == 0.0
+                && p.1 > le.cy + le.h / 2.0
+                && e.points[0].1 == p.1
+                && e.points[0].0 != 0.0
+        })
+        .expect("рельса вливается в ось ниже loop_end");
     assert!(
-        rail.points.len() == 5,
-        "через коридор — четыре сегмента: {:?}",
-        rail.points
+        trunk.points[0].0 < -lb.w / 2.0,
+        "низ рельсы идёт из коридора: {:?}",
+        trunk.points
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
 }
@@ -391,19 +412,25 @@ fn break_goes_left_rail_below_loop() {
         loop_node("while i < 5", vec![s("a = 1"), sbrk()]),
         node(NodeKind::Term, "конец"),
     ];
-    let st = Style::default();
     let l = lay(&nodes);
-    let (lw, _) = measure(&st, "loop", "while i < 5");
+    let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     let rail = l
         .edges
         .iter()
-        .find(|e| !e.arrow && e.points.iter().any(|p| p.0 < -lw / 2.0))
+        .find(|e| {
+            let p = e.points.last().unwrap();
+            !e.arrow
+                && p.0 == 0.0
+                && p.1 > le.cy + le.h / 2.0
+                && e.points[0].1 == p.1
+                && e.points[0].0 != 0.0
+        })
         .expect("рельса break через левый канал");
-    let last = rail.points.last().unwrap();
     assert!(
-        last.0 == 0.0 && last.1 > le.cy + le.h / 2.0,
-        "рельса сливается с магистралью ниже loop_end: {last:?}"
+        rail.points[0].0 < -lb.w / 2.0,
+        "рельса идёт из коридора левее трапеции: {:?}",
+        rail.points
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
 }
@@ -1584,20 +1611,23 @@ output printf(\"далее\")
         .iter()
         .any(|sh| sh.lines == vec!["b = 2".to_string()]));
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
-    let le_bottom = le.cy + le.h / 2.0;
+    // continue — следующая итерация: входит в БОК loop_end, выше его
+    // низа и выше нижней трапеции; не сливается с выходом из цикла
+    let cont_y = le.cy - st.grid;
     let rail = l
         .edges
         .iter()
         .find(|e| {
             let last = e.points.last().unwrap();
-            last.0 == 0.0 && last.1 > le_bottom + 1e-9 && e.points.len() >= 4
+            let side = (last.0 - (le.cx - le.w / 2.0)).abs() < 1e-9
+                || (last.0 - (le.cx + le.w / 2.0)).abs() < 1e-9;
+            !e.arrow && (last.1 - cont_y).abs() < 1e-9 && side
         })
-        .expect("рельса continue к выходу loop_end");
-    let merge_y = le_bottom + st.mgap;
-    let yj = rail.points.last().unwrap().1;
+        .expect("рельса continue входит в бок loop_end");
     assert!(
-        yj < merge_y,
-        "T-стык на выходе loop_end, не ниже: {yj} vs {merge_y}"
+        rail.points.len() >= 2,
+        "рельса приходит на бок трапеции: {:?}",
+        rail.points
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
 }
@@ -2023,4 +2053,131 @@ fn letters_wrap_past_alphabet() {
         parts[n_letters].last().unwrap().text,
         "буквы обязаны зацикливаться"
     );
+}
+
+/// Цикл читается циклом: из нижней трапеции есть ребро назад, вверх к
+/// голове (а не только вниз на продолжение).
+#[test]
+fn loop_has_return_edge_up_to_head() {
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        loop_node("while i < 5", vec![s("i = i + 1")]),
+        node(NodeKind::Term, "конец"),
+    ];
+    let l = lay(&nodes);
+    let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
+    let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
+    let back = l
+        .edges
+        .iter()
+        .find(|e| {
+            e.arrow
+                && e.points.len() == 4
+                && e.points[0].1 > e.points.last().unwrap().1
+                && (e.points.last().unwrap().1 - lb.cy).abs() < 1e-9
+        })
+        .expect("обратный ход цикла к голове");
+    assert!(
+        back.points
+            .iter()
+            .any(|p| p.0 < lb.cx - lb.w / 2.0 || p.0 > lb.cx + lb.w / 2.0),
+        "обратный ход идёт коридором снаружи трапеции: {:?}",
+        back.points
+    );
+    assert!(
+        (back.points[0].1 - le.cy).abs() < 1e-9,
+        "обратный ход начинается с нижней трапеции: {:?}",
+        back.points
+    );
+    assert!(collinear_overlap_ok(&l).is_ok());
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+}
+
+/// do-while: тело выполняется до проверки — обратный ход идёт к входу
+/// тела, а не к заголовку с условием; маркер «do while» на месте.
+#[test]
+fn do_while_returns_to_body_entry() {
+    let mut lp = loop_node("x < 3", vec![s("x = x + 1")]);
+    lp.loop_kind = Some(crate::ir::LoopKind::DoWhile);
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        lp,
+        node(NodeKind::Term, "конец"),
+    ];
+    let l = lay(&nodes);
+    let lb = l.shapes.iter().find(|sh| sh.kind == "loop_begin").unwrap();
+    assert_eq!(
+        lb.lines,
+        vec!["1. do while x < 3".to_string()],
+        "маркер do на голове"
+    );
+    let back = l
+        .edges
+        .iter()
+        .find(|e| e.arrow && e.points.len() == 4 && e.points[0].1 > e.points.last().unwrap().1)
+        .expect("обратная связь do-while");
+    let end = back.points.last().unwrap();
+    assert!(
+        end.0 == lb.cx && end.1 > lb.cy + lb.h / 2.0,
+        "do-while возвращается к входу тела, ниже головы: {end:?}"
+    );
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(collinear_overlap_ok(&l).is_ok());
+}
+
+/// break и continue ведут в разные точки: continue — в бок loop_end
+/// (следующая итерация), break — ниже нижней трапеции (выход из цикла).
+#[test]
+fn break_and_continue_leave_at_different_heights() {
+    let mut cont = node(NodeKind::Decision, "if a");
+    cont.branches = vec![
+        br("да", vec![Stmt::Continue], false),
+        br("нет", vec![], false),
+    ];
+    let mut brk = node(NodeKind::Decision, "if b");
+    brk.branches = vec![br("да", vec![Stmt::Break], false), br("нет", vec![], false)];
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        loop_node(
+            "while i < 5",
+            vec![
+                s("i = i + 1"),
+                Stmt::Node(Box::new(cont)),
+                Stmt::Node(Box::new(brk)),
+            ],
+        ),
+        node(NodeKind::Term, "конец"),
+    ];
+    let st = Style::default();
+    let l = lay(&nodes);
+    let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
+    let cont_edge = l
+        .edges
+        .iter()
+        .find(|e| {
+            !e.arrow
+                && e.points.last().is_some_and(|p| {
+                    (p.1 - (le.cy - st.grid)).abs() < 1e-6
+                        && ((p.0 - (le.cx - le.w / 2.0)).abs() < 1e-6
+                            || (p.0 - (le.cx + le.w / 2.0)).abs() < 1e-6)
+                })
+        })
+        .expect("continue входит в бок loop_end");
+    let brk_edge = l
+        .edges
+        .iter()
+        .find(|e| {
+            !e.arrow
+                && e.points.last().is_some_and(|p| {
+                    p.0 == le.cx && p.1 > le.cy + le.h / 2.0 && p.1 < le.cy + le.h / 2.0 + 40.0
+                })
+        })
+        .expect("break уходит ниже loop_end");
+    assert!(
+        cont_edge.points.last().unwrap().1 < brk_edge.points.last().unwrap().1,
+        "continue выше выхода break"
+    );
+    assert!(collinear_overlap_ok(&l).is_ok());
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(dangling_ok(&l).is_ok());
 }

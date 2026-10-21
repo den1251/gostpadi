@@ -53,6 +53,10 @@ pub(super) struct Ctx<'a> {
     /// render_column вызван напрямую за кейс-колонку switch-рендера
     pub case_direct: bool,
     pub break_slot: usize,
+    /// коридоры рельс цикла: база по вложенности и счётчики сторон
+    pub lane_base: usize,
+    pub lane_left: usize,
+    pub lane_right: usize,
     pub breaks: Vec<BreakAt>,
     /// continue: рельсы к выходу loop_end (следующая итерация)
     pub continues: Vec<BreakAt>,
@@ -136,6 +140,9 @@ impl<'a> Ctx<'a> {
             switch_depth: 0,
             case_direct: false,
             break_slot: 0,
+            lane_base: 0,
+            lane_left: 0,
+            lane_right: 0,
             breaks: Vec::new(),
             continues: Vec::new(),
         }
