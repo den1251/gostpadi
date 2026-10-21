@@ -272,7 +272,19 @@ pub fn route(request_line: &str, body: &[u8]) -> (u16, String) {
             (200, pipeline::batch_json(&pages, &[], &[]))
         }
         "/export" => {
-            let want_drawio = q.get("mode").map(String::as_str) == Some("2");
+            let want_drawio = match q.get("mode").map(String::as_str) {
+                Some("2") => true,
+                Some("1") | None => false,
+                Some(other) => {
+                    return (
+                        400,
+                        format!(
+                            "{{\"ok\":false,\"error\":\"mode: только 1|2, получено {}\"}}",
+                            esc(other)
+                        ),
+                    )
+                }
+            };
             let out: Vec<(String, Vec<String>)> = if want_drawio {
                 pipeline::render_drawio_batch(schemes, &st)
                     .into_iter()

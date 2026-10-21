@@ -69,10 +69,12 @@ fn doc_bounds(l: &Layout, st: &Style) -> (f64, f64, f64, f64) {
         return l.bounds;
     };
     let (minx, miny, dw, dh) = l.bounds;
-    let x0 = (cx - w / 2.0).min(minx);
-    let x1 = (cx + w / 2.0).max(minx + dw);
-    let y0 = y0.min(miny);
-    (x0, y0, x1 - x0, miny + dh - y0)
+    // полуширина штриха: без запаса рамка подписи срезается краем viewBox
+    let pad = st.edge_lw / 2.0;
+    let x0 = (cx - w / 2.0).min(minx) - pad;
+    let x1 = (cx + w / 2.0).max(minx + dw) + pad;
+    let y0 = y0.min(miny) - pad;
+    (x0, y0, x1 - x0, miny + dh - y0 + pad)
 }
 
 /// Подпись схемы: прямоугольник с двойными вертикальными линиями —

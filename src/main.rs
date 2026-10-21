@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use gostpadi::error::ParseError;
-use gostpadi::layout::{
-    crossings_ok, dangling_ok, layout, normalize, overlaps_ok, single_entry_ok,
-};
 use gostpadi::pipeline::{self, Options};
 
 mod serve;
@@ -114,6 +111,19 @@ fn base_for(
     match output {
         Some(o) if folder => PathBuf::from(o).join(format!("{stem}.svg")),
         Some(o) if batch => Path::new(inp).parent().unwrap_or(Path::new("")).join(o),
+        // -o файл: у входа с функциями имя схемы — имя файла с суффиксом
+        // функции, иначе все схемы писались в один -o и выживала последняя
+        Some(o) if fun.is_some() => {
+            let p = Path::new(o);
+            let name = p
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "scheme".into());
+            p.with_file_name(format!(
+                "{name}-{}.svg",
+                stem.rsplit_once('-').map_or("", |(_, f)| f)
+            ))
+        }
         Some(o) => PathBuf::from(o),
         None => Path::new(inp).with_file_name(format!("{stem}.svg")),
     }
@@ -297,28 +307,23 @@ fn main() {
                 Some(f) => format!("{inp}#{f}"),
                 None => inp.to_string(),
             };
-            let nodes = &s.nodes;
-            let l = layout(nodes, &normalize(nodes, &st), &st);
-            let bad = |msg: String| -> ! {
-                eprintln!("{name}: {msg}");
-                process::exit(1);
-            };
-            if let Err(e) = crossings_ok(&l.shapes, &l.edges) {
-                bad(format!("линии заходят на блоки: {e}"));
-            }
-            if let Err(e) = dangling_ok(&l) {
-                bad(format!("обрыв линии: {e}"));
-            }
-            if !overlaps_ok(&l.shapes) {
-                bad("фигуры перекрываются".into());
-            }
-            if !single_entry_ok(&l) {
-                bad("в «конец» входит не одна стрелка".into());
+            // один список проверок на CLI, serve /lint и corpus-тест:
+            // раньше CLI дублировал его вручную и отставал от инвариантов
+            match pipeline::validate(std::slice::from_ref(s), &st)
+                .into_iter()
+                .next()
+            {
+                Some((_, Ok(_))) => {}
+                Some((_, Err(msg))) => {
+                    eprintln!("{name}: {msg}");
+                    process::exit(1);
+                }
+                None => {}
             }
             if multi {
-                out(&format!("{name}: ok: {} blocks\n", nodes.len()));
+                out(&format!("{name}: ok: {} blocks\n", s.nodes.len()));
             } else {
-                out(&format!("ok: {} blocks\n", nodes.len()));
+                out(&format!("ok: {} blocks\n", s.nodes.len()));
             }
         }
         return;

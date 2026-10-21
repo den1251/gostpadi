@@ -280,6 +280,15 @@ pub fn render_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Vec<String
         laid = ref_laid;
         s = s_ref;
     }
+    // README обещает предупреждение, а не тихо нечитаемый лист
+    if s < st.split_min {
+        eprintln!(
+            "предупреждение: масштаб {s:.3} ниже читаемого {:.2} — кегль {:.1} pt; \
+             уменьшите схему или разрешите рез на листы",
+            st.split_min,
+            st.font * s
+        );
+    }
     laid.into_iter()
         .map(|(path, pages)| {
             let pages = pages.iter().map(|l| render_svg_at(l, st, s)).collect();

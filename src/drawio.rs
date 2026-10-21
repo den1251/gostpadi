@@ -132,6 +132,23 @@ fn label_cell(id: &str, lb: &crate::layout::Label, st: &Style) -> String {
 /// Лист раскладки -> один `<diagram>`.
 fn diagram(name: &str, layout: &Layout, st: &Style) -> String {
     let mut body = String::new();
+    // подпись функции над схемой — тот же «предопределённый процесс», что и
+    // в SVG: без него в draw.io не видно, какая схема какой функции
+    if let Some(title) = layout.title.as_deref() {
+        if let Some(top) = layout
+            .shapes
+            .iter()
+            .min_by(|a, b| a.cy.partial_cmp(&b.cy).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            let (w, h) = crate::layout::measure(st, "act", title);
+            let x = top.cx - w / 2.0;
+            let y = top.cy - top.h / 2.0 - 2.0 * st.grid - h;
+            body.push_str(&format!(
+                "        <mxCell id=\"title\" value=\"{}\" style=\"rounded=0;html=1;fontFamily=DejaVu Sans Mono;fontSize={};fillColor=#ffffff;strokeColor=#000000;\" vertex=\"1\" parent=\"1\">\n          <mxGeometry x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" as=\"geometry\"/>\n        </mxCell>\n",
+                esc(title), st.font.round(), x, y, w, h
+            ));
+        }
+    }
     for (i, sh) in layout.shapes.iter().enumerate() {
         body.push_str(&cell(&format!("n{i}"), sh, st));
         body.push('\n');
