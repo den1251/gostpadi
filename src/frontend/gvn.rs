@@ -207,6 +207,9 @@ fn find_branch_colon(s: &str) -> Option<usize> {
                 || left_trim.contains('(')
                 || left_trim.contains(')')
                 || left_trim.contains('"')
+                // тернарный оператор C: двоеточие — часть выражения, а не
+                // метка ветки (start = a < b ? a : b превращалось в ветки)
+                || left_trim.contains('?')
             {
                 continue;
             }
@@ -671,6 +674,23 @@ mod tests {
             .as_ref()
             .unwrap();
         assert!(matches!(body[0], Stmt::Continue));
+    }
+
+    /// Тернарный оператор C в строке действия: `? ... : ...` — выражение,
+    /// а не метка ветки. Иначе хвост if превращался в псевдо-ветки
+    /// «start = ... ? imin» и «end = ... ? imax» (1.c лабораторной).
+    #[test]
+    fn ternary_is_not_a_branch_label() {
+        let st = Style::default();
+        let text = "if !eof\n    да:\n    a = 1\n    start = imin < imax ? imin : imax\n    нет:\n";
+        let nodes = parse(text, &st, "").unwrap();
+        let d = nodes.iter().find(|n| n.kind == NodeKind::Decision).unwrap();
+        assert_eq!(d.branches.len(), 2, "тернарный `:` не создаёт ветку");
+        assert!(d.branches.iter().all(|b| !b.label.contains("start =")));
+        assert!(matches!(
+            &d.branches[0].stmts[1],
+            Stmt::Tile { text, .. } if text.contains("? imin : imax")
+        ));
     }
 
     fn en_style() -> Style {

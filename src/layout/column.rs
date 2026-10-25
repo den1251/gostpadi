@@ -102,7 +102,13 @@ pub(super) fn extent_lr(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) ->
                     hr = hr.max(br + st.mgap);
                 }
             }
-            Stmt::Break | Stmt::Continue => {}
+            Stmt::Break | Stmt::Continue => {
+                // после плитки break/continue рисуется шестиугольником:
+                // его ширина может превысить узкую плитку колонки
+                let e = sizes["exit"].0 / 2.0;
+                hl = hl.max(e);
+                hr = hr.max(e);
+            }
         }
     }
     // колонка без фигур (только break/continue) не схлопывается на ось:
@@ -165,6 +171,7 @@ impl Ctx<'_> {
                 }
                 Stmt::Break | Stmt::Continue => {
                     let is_break = matches!(it, Stmt::Break);
+                    let text = if is_break { "break" } else { "continue" };
                     let scoped = self.loop_depth > 0 || self.switch_depth > 0;
                     if scoped {
                         // break напрямую в кейс-колонке switch —
@@ -174,20 +181,37 @@ impl Ctx<'_> {
                         if is_break && self.switch_depth > 0 && self.case_direct {
                             return (prev_bottom.unwrap_or(top0), ColEnd::Flow);
                         }
+                        // Выход из потока после плитки — отдельный
+                        // шестиугольник с подписью ВНУТРИ. Поток входит в
+                        // его верхнюю вершину стрелкой, рельса уходит из
+                        // нижней. Раньше подпись висела снаружи, а рельса
+                        // рисовала под плиткой «пустую» фигуру и шла
+                        // насквозь (1.c: eof = 1; break;).
+                        let mut y = prev_bottom.unwrap_or(top0);
+                        let marked = if let Some(pb) = prev_bottom {
+                            let (_, h_e) = self.sizes["exit"];
+                            let cy = top + h_e / 2.0;
+                            self.add("exit", tx, cy, text);
+                            self.edge(&[(tx, pb), (tx, top)], true);
+                            y = top + h_e;
+                            true
+                        } else {
+                            false
+                        };
                         let exit = BreakAt {
                             tx,
-                            y: prev_bottom.unwrap_or(top0),
+                            y,
                             from_tile: prev_bottom.is_some(),
+                            marked,
                         };
                         if is_break {
                             self.breaks.push(exit);
                         } else {
                             self.continues.push(exit);
                         }
-                        return (prev_bottom.unwrap_or(top0), ColEnd::Rail);
+                        return (y, ColEnd::Rail);
                     }
                     // вне цикла и switch — прежняя плитка
-                    let text = if is_break { "break" } else { "continue" };
                     self.draw_tile(text, TileKind::Act, tx, top, &mut prev_bottom);
                 }
                 Stmt::Tile { kind, text } => {

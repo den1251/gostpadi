@@ -188,7 +188,58 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         items = rest;
     }
     link_branches_to_end(&mut parts, &letter, &mut li);
+    glue_loop_pieces(&mut parts);
     parts
+}
+
+/// Голова и хвост разрезанного цикла попали на один лист — цикл рисуется
+/// целиком. Иначе головная часть уводит рельсы break/continue в ствол
+/// листа (rails_to_page), и рельса вливается в продолжение тела: на 1.c
+/// горизонталь break садилась на ствол перед следующим if, образуя
+/// 4-сторонний узел с неоднозначным продолжением. Части на разных листах
+/// не склеиваются — там рельсы честно уходят на кружок-выход.
+fn glue_loop_pieces(parts: &mut [Vec<Node>]) {
+    for part in parts {
+        let mut out: Vec<Node> = Vec::with_capacity(part.len());
+        let mut i = 0;
+        while i < part.len() {
+            let is_head =
+                part[i].kind == NodeKind::Loop && part[i].text.chars().next() == Some(HEAD);
+            if !is_head {
+                out.push(part[i].clone());
+                i += 1;
+                continue;
+            }
+            let mut body = part[i].body.clone().unwrap_or_default();
+            let mut j = i + 1;
+            let mut closed = false;
+            while j < part.len() && part[j].kind == NodeKind::Loop {
+                match part[j].text.chars().next() {
+                    Some(MID) => {
+                        body.extend(part[j].body.clone().unwrap_or_default());
+                        j += 1;
+                    }
+                    Some(TAIL) => {
+                        body.extend(part[j].body.clone().unwrap_or_default());
+                        j += 1;
+                        closed = true;
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            if closed {
+                let mut nd = Node::new(NodeKind::Loop, no_sentinel(&part[i].text).to_string());
+                nd.body = Some(body);
+                out.push(nd);
+                i = j;
+            } else {
+                out.push(part[i].clone());
+                i += 1;
+            }
+        }
+        *part = out;
+    }
 }
 
 /// Маркеры ручного переноса не рисуются там, где страниц нет
@@ -404,6 +455,37 @@ mod tests {
         let parts = split_scheme(nodes, &sizes, &st);
         assert!(!parts.is_empty());
         assert!(parts.iter().all(|p| !p.is_empty()));
+    }
+
+    /// Голова и хвост одного цикла на одном листе — снова целый цикл.
+    /// Иначе головная часть уводила рельсы в ствол листа, и break
+    /// вливался в продолжение тела (1.c: рельса садилась на ствол перед
+    /// следующим if, 4-сторонний узел).
+    #[test]
+    fn head_and_tail_on_one_sheet_glue_into_full_loop() {
+        let mut head = Node::new(NodeKind::Loop, format!("{HEAD}while !ok"));
+        head.body = Some(vec![Stmt::Tile {
+            kind: crate::ir::TileKind::Act,
+            text: "eof = 1".into(),
+        }]);
+        let mut tail = Node::new(NodeKind::Loop, TAIL.to_string());
+        tail.body = Some(vec![Stmt::Tile {
+            kind: crate::ir::TileKind::Act,
+            text: "ok = 1".into(),
+        }]);
+        let mut parts = vec![vec![head.clone(), tail.clone()]];
+        glue_loop_pieces(&mut parts);
+        assert_eq!(parts[0].len(), 1, "пара кусков слилась в один узел");
+        let nd = &parts[0][0];
+        assert_eq!(nd.kind, NodeKind::Loop);
+        assert_eq!(no_sentinel(&nd.text), "while !ok");
+        assert_eq!(nd.body.as_ref().map(Vec::len), Some(2), "тело обоих кусков");
+        assert!(!is_piece(nd), "сентинела больше нет");
+
+        // куски на разных листах (между ними кружок) не склеиваются
+        let mut parts = vec![vec![head, Node::new(NodeKind::Conn, "А"), tail]];
+        glue_loop_pieces(&mut parts);
+        assert_eq!(parts[0].len(), 3);
     }
 }
 

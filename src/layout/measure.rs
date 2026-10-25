@@ -122,6 +122,8 @@ pub fn normalize(nodes: &[Node], st: &Style) -> Sizes {
         ("act", "x"),
         ("if", "x"),
         ("loop", "x"),
+        // маркер выхода break/continue: подпись живёт внутри шестиугольника
+        ("exit", "continue"),
         ("conn", "А"),
     ] {
         put(&mut sizes, st, kind, sample);

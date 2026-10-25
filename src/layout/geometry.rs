@@ -185,7 +185,7 @@ fn flat_sides(sh: &Shape) -> [Option<(f64, f64)>; 4] {
             [Some((x0 + dx, x1)), Some((x0, x1 - dx)), None, None]
         }
         "if" | "conn" => [None, None, None, None],
-        "loop_begin" => [
+        "loop_begin" | "exit" => [
             Some((x0 + sh.skew, x1 - sh.skew)),
             Some((x0, x1)),
             Some((y0 + sh.skew, y1)),

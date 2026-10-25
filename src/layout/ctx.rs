@@ -20,6 +20,9 @@ pub(super) struct BreakAt {
     /// Перед break стояла нарисованная плитка: рельса уходит из её низа,
     /// иначе колонка без плиток и уходить неоткуда.
     pub from_tile: bool,
+    /// Выход нарисован шестиугольником-маркером с подписью внутри:
+    /// подпись рельсы снаружи коридора больше не нужна.
+    pub marked: bool,
 }
 
 /// Чем закончилась колонка. Flow — поток продолжается; Return — тупик
@@ -159,7 +162,7 @@ impl<'a> Ctx<'a> {
         const SKEW_45_H: f64 = 0.5;
         const SKEW_MAX_W: f64 = 0.25;
         let skew = match kind {
-            "loop_begin" | "loop_end" => (SKEW_45_H * h).min(SKEW_MAX_W * w),
+            "loop_begin" | "loop_end" | "exit" => (SKEW_45_H * h).min(SKEW_MAX_W * w),
             _ => 0.0,
         };
         self.shapes.push(Shape {

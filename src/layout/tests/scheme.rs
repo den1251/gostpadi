@@ -4,8 +4,8 @@
 use super::*;
 use crate::layout::measure::{HEAD, MID, TAIL};
 use crate::layout::{
-    collinear_overlap_ok, crossings_ok, dangling_ok, layout, measure, normalize, overlaps_ok,
-    single_entry_ok, split_scheme,
+    collinear_overlap_ok, crossings_ok, dangling_ok, edge_on_border_ok, layout, measure, normalize,
+    overlaps_ok, single_entry_ok, split_scheme,
 };
 
 #[test]
@@ -303,19 +303,30 @@ int main() {
 ";
     let nodes = crate::frontend::c::parse_c_to_nodes(src, "ru").unwrap();
     let l = lay(&nodes);
-    let tile = l
+    let marker = l
         .shapes
         .iter()
-        .find(|sh| sh.lines == vec!["coprime = 0".to_string()])
-        .expect("плитка перед break");
+        .find(|sh| sh.kind == "exit" && sh.lines == vec!["break".to_string()])
+        .expect("маркер break после плитки");
+    // поток плитка -> маркер входит в его верхнюю вершину стрелкой
+    let top = marker.cy - marker.h / 2.0;
+    assert!(
+        l.edges.iter().any(|e| {
+            e.arrow
+                && e.points
+                    .last()
+                    .is_some_and(|p| (p.0 - marker.cx).abs() < 1e-9 && (p.1 - top).abs() < 1e-9)
+        }),
+        "стрелка входа в маркер сверху"
+    );
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
-    let cx = tile.cx;
-    let bottom = tile.cy + tile.h / 2.0;
-    // колонка плитки должна быть вне трапеции слияния — иначе тест проверяет
-    // не тот маршрут и падает не по делу
+    let cx = marker.cx;
+    let bottom = marker.cy + marker.h / 2.0;
+    // колонка маркера должна быть вне трапеции слияния — иначе тест
+    // проверяет не тот маршрут и падает не по делу
     assert!(
         cx < le.cx - le.w / 2.0 || cx > le.cx + le.w / 2.0,
-        "колонка плитки вне трапеции слияния: cx={cx}, трапеция {}..{}",
+        "колонка маркера вне трапеции слияния: cx={cx}, трапеция {}..{}",
         le.cx - le.w / 2.0,
         le.cx + le.w / 2.0
     );
@@ -323,15 +334,15 @@ int main() {
         .edges
         .iter()
         .find(|e| e.points.len() == 3 && (e.points[0].0 - cx).abs() < 1e-9)
-        .expect("рельса из центра плитки прямо вниз");
+        .expect("рельса из центра маркера прямо вниз");
     assert!(
         (rail.points[0].1 - bottom).abs() < 1e-9,
-        "рельса начинается с низа плитки: {:?}",
+        "рельса начинается с низа маркера: {:?}",
         rail.points[0]
     );
     assert!(
         rail.points[1].0 == cx && rail.points[1].1 > bottom,
-        "падение строго вниз по оси плитки: {:?}",
+        "падение строго вниз по оси маркера: {:?}",
         &rail.points[1..2]
     );
     assert!(
@@ -353,10 +364,173 @@ int main() {
     assert_eq!(
         rail.points.len(),
         3,
-        "прямая рельса: центр плитки -> вниз -> ось цикла: {:?}",
+        "прямая рельса: низ маркера -> вниз -> ось цикла: {:?}",
         rail.points
     );
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+}
+
+/// Репорт (1.c): `if (fgets(...) == NULL) { eof = 1; break; }` внутри
+/// `while (!ok)`. Маркер выхода — отдельная фигура с подписью ВНУТРИ;
+/// ни одно ребро не проходит сквозь его внутренность и не идёт по
+/// кромке, вход — стрелкой в верхнюю вершину, рельса — из нижней к низу
+/// цикла. Регрессия: подпись висела снаружи, а рельса шла насквозь и
+/// вливалась в ствол на высоте тела (4-сторонний узел).
+#[test]
+fn break_marker_after_input_is_a_separate_shape() {
+    let src = "\
+int main() {
+    char line[67];
+    int eof, ok, n;
+    eof = 0;
+    printf(\"n: \");
+    ok = 0;
+    while (!ok) {
+        if (fgets(line, sizeof line, stdin) == NULL) { eof = 1; break; }
+        if (sscanf(line, \"%d\", &n) == 1 && n > 0 && n <= 100) { ok = 1; }
+        else { printf(\"err: \"); }
+    }
+    return 0;
+}
+";
+    let nodes = crate::frontend::c::parse_c_to_nodes(src, "ru").unwrap();
+    let l = lay(&nodes);
+    let m = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "exit" && sh.lines == vec!["break".to_string()])
+        .expect("маркер break — отдельный шестиугольник");
+    let (top, bot) = (m.cy - m.h / 2.0, m.cy + m.h / 2.0);
+    let (left, right) = (m.cx - m.w / 2.0, m.cx + m.w / 2.0);
+    // подпись только внутри фигуры: внешней метки нет
+    assert!(
+        !l.labels
+            .iter()
+            .any(|lb| lb.text == "break" || lb.text == "continue"),
+        "подпись маркера висит снаружи: {:?}",
+        l.labels
+            .iter()
+            .filter(|lb| lb.text == "break" || lb.text == "continue")
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(m.lines, vec!["break".to_string()], "текст в shape.lines");
+    // ни одно ребро не заходит во внутренность и не лежит на кромке
+    for (i, e) in l.edges.iter().enumerate() {
+        for w in e.points.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let horiz = (a.1 - b.1).abs() < 1e-9;
+            let vert = (a.0 - b.0).abs() < 1e-9;
+            if horiz {
+                let inside = a.1 > top + 1e-6
+                    && a.1 < bot - 1e-6
+                    && a.0.min(b.0) < right - 1e-6
+                    && a.0.max(b.0) > left + 1e-6;
+                assert!(
+                    !inside,
+                    "ребро #{i} горизонталью вошло в маркер: {a:?}-{b:?}"
+                );
+                let border = (a.1 - top).abs() < 1e-6 || (a.1 - bot).abs() < 1e-6;
+                assert!(
+                    !(border && a.0.min(b.0) < right - m.skew && a.0.max(b.0) > left + m.skew),
+                    "ребро #{i} легло на кромку маркера: {a:?}-{b:?}"
+                );
+            } else if vert {
+                let inside = a.0 > left + 1e-6
+                    && a.0 < right - 1e-6
+                    && a.1.min(b.1) < bot - 1e-6
+                    && a.1.max(b.1) > top + 1e-6;
+                assert!(!inside, "ребро #{i} вертикалью вошло в маркер: {a:?}-{b:?}");
+            }
+        }
+    }
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(edge_on_border_ok(&l).is_ok());
+    // --check ловит обе формы дефекта: линию сквозь маркер и по кромке
+    let mut through = l.clone();
+    through.edges.push(crate::layout::Edge {
+        points: vec![(left - 10.0, m.cy), (right + 10.0, m.cy)],
+        arrow: false,
+    });
+    assert!(
+        crossings_ok(&through.shapes, &through.edges).is_err(),
+        "check пропускает линию через маркер"
+    );
+    let mut border = l.clone();
+    border.edges.push(crate::layout::Edge {
+        points: vec![(left, bot), (right, bot)],
+        arrow: false,
+    });
+    assert!(
+        edge_on_border_ok(&border).is_err(),
+        "check пропускает линию по кромке маркера"
+    );
+    // вход — стрелка в верхнюю вершину, рельса — из нижней
+    assert!(
+        l.edges.iter().any(|e| {
+            e.arrow
+                && e.points
+                    .last()
+                    .is_some_and(|p| (p.0 - m.cx).abs() < 1e-9 && (p.1 - top).abs() < 1e-9)
+        }),
+        "в маркер входит стрелка сверху"
+    );
+    // рельса — цепочка сегментов от низа маркера до ствола под циклом
+    let le = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "loop_end")
+        .expect("низ цикла");
+    let le_bottom = le.cy + le.h / 2.0;
+    let mut p = (m.cx, bot);
+    let mut end = None;
+    for _ in 0..12 {
+        let Some(e) = l
+            .edges
+            .iter()
+            .find(|e| (e.points[0].0 - p.0).abs() < 1e-9 && (e.points[0].1 - p.1).abs() < 1e-9)
+        else {
+            break;
+        };
+        p = *e.points.last().unwrap();
+        if p.0 == 0.0 {
+            end = Some(p);
+            break;
+        }
+    }
+    let last = end.expect("рельса break доходит до ствола, а не обрывается");
+    assert!(
+        last.1 > le_bottom,
+        "рельса break уходит за низ цикла, а не в тело: {last:?} при низе {le_bottom}"
+    );
+    // стык однозначен: рельса вливается в вертикаль, которая продолжается
+    // вниз, а второй горизонтали с другой стороны нет (не 4-сторонний узел)
+    let trunk = l
+        .edges
+        .iter()
+        .find(|e| {
+            e.points.windows(2).any(|w| {
+                (w[0].0 - last.0).abs() < 1e-9
+                    && (w[1].0 - last.0).abs() < 1e-9
+                    && w[0].1 < last.1 - 1e-9
+                    && w[1].1 > last.1 + 1e-9
+            })
+        })
+        .expect("в стыке рельсы вертикаль продолжается вниз");
+    assert!(
+        trunk.points.iter().any(|p| p.1 > last.1),
+        "продолжение вниз есть: {:?}",
+        trunk.points
+    );
+    assert!(
+        !l.edges.iter().any(|e| {
+            let n = e.points.len();
+            (e.points[n - 1].0 - last.0).abs() < 1e-9
+                && (e.points[n - 1].1 - last.1).abs() < 1e-9
+                && (e.points[n - 2].1 - last.1).abs() < 1e-9
+                && e.points[n - 2].0 < last.0
+        }),
+        "в стык не входит вторая горизонталь слева: не 4-сторонний узел"
+    );
 }
 
 /// Когда колонка плитки накрыта трапецией слияния, рельса идёт через

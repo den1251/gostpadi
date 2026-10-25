@@ -58,8 +58,9 @@ pub(crate) fn shape_svg(out: &mut String, sh: &Shape, lw: f64) {
             poly(out, &[(x0 + dx, y0), (x1, y0), (x1 - dx, y1), (x0, y1)]);
         }
         "if" => poly(out, &[(x0, sh.cy), (sh.cx, y0), (x1, sh.cy), (sh.cx, y1)]),
-        // подготовка: срезаны верхние углы
-        "loop_begin" => poly(
+        // подготовка: срезаны верхние углы; маркер выхода break/continue —
+        // тот же шестиугольник, подпись внутри
+        "loop_begin" | "exit" => poly(
             out,
             &[
                 (x0 + sh.skew, y0),

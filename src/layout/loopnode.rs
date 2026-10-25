@@ -346,9 +346,13 @@ impl Ctx<'_> {
             }
             // В одном коридоре два смысла — подписи у выходов. Подписи
             // снаружи коридора: между рельсой и фигурой места нет.
+            // Выход, нарисованный маркером, подпись уже несёт внутри.
             if !bs.is_empty() && !cs.is_empty() {
-                for (y, text) in [(cont_y, "continue"), (yj, "break")] {
-                    self.rail_label(lane, right_side, y, text);
+                if cs.iter().any(|b| !b.marked) {
+                    self.rail_label(lane, right_side, cont_y, "continue");
+                }
+                if bs.iter().any(|b| !b.marked) {
+                    self.rail_label(lane, right_side, yj, "break");
                 }
             }
         }
@@ -395,11 +399,15 @@ impl Ctx<'_> {
             // рельса одна, а не только при обоих смыслах в коридоре.
             if !cs.is_empty() {
                 self.edge(&[(lane, cont_y), (tx, cont_y)], false);
-                self.rail_label(lane, right_side, cont_y, "continue");
+                if cs.iter().any(|b| !b.marked) {
+                    self.rail_label(lane, right_side, cont_y, "continue");
+                }
             }
             if !bs.is_empty() {
                 self.edge(&[(lane, brk_y), (tx, brk_y)], false);
-                self.rail_label(lane, right_side, brk_y, "break");
+                if bs.iter().any(|b| !b.marked) {
+                    self.rail_label(lane, right_side, brk_y, "break");
+                }
             }
         }
     }
