@@ -631,6 +631,41 @@ mod tests {
         );
     }
 
+    /// mode=3: страниц в книге ровно столько, сколько SVG-листов у пачки,
+    /// и каждая схема/лист — отдельный `<diagram>` с именем.
+    #[test]
+    fn drawio_book_page_count_matches_svg_sheets() {
+        let long: String = (0..120).map(|i| format!("a = {i}\n")).collect();
+        let schemes = parse_batch(
+            &[
+                (
+                    "short.gvn".into(),
+                    "x = 1\noutput printf(1)\n".into(),
+                    false,
+                ),
+                ("long.gvn".into(), long, false),
+            ],
+            &opts(),
+        )
+        .unwrap();
+        let st = opts().style();
+        let sheets: usize = render_batch(schemes.clone(), &st)
+            .iter()
+            .map(|(_, p)| p.len())
+            .sum();
+        assert!(sheets > 2, "длинная схема должна резаться: {sheets}");
+        let xml = render_drawio_book(schemes, &st);
+        assert_eq!(
+            xml.matches("<diagram ").count(),
+            sheets,
+            "число страниц книги не равно числу листов"
+        );
+        assert!(
+            xml.contains("short") && xml.contains("long"),
+            "нет имён схем"
+        );
+    }
+
     /// Маркер ручного переноса `// перенос` до SVG не доезжает: на
     /// страницах — кружки-соединители, слова «перенос» нет.
     #[test]

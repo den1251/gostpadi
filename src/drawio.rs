@@ -21,7 +21,9 @@ use crate::style::Style;
 const PAGE_W: f64 = 595.276;
 const PAGE_H: f64 = 841.89;
 
-/// Экранирование текста для XML.
+/// Экранирование текста для XML-атрибута. Переводы строк — числовыми
+/// ссылками: XML-парсер схлопывает литеральный \n в атрибуте в пробел,
+/// и многострочная плитка в draw.io становилась однострочной.
 fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -31,10 +33,21 @@ fn esc(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            '\n' => out.push_str("&#10;"),
+            '\r' => out.push_str("&#13;"),
+            '\t' => out.push_str("&#9;"),
+            c if !crate::generate::text::xml_ok(c) => out.push('\u{FFFD}'),
             _ => out.push(c),
         }
     }
     out
+}
+
+/// Число листа без хвостовых нулей: 595.276 остаётся 595.276,
+/// 841.890 — 841.89. Два знака превращали А4 в 595.28.
+fn page_num(v: f64) -> String {
+    let s = format!("{v:.3}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 /// Стиль фигуры по её виду в раскладке. Формы те же, что рисует SVG:
@@ -195,13 +208,13 @@ fn diagram(name: &str, layout: &Layout, st: &Style) -> String {
     format!(
         "  <diagram name=\"{}\" id=\"{}\">\n    <mxGraphModel dx=\"850\" dy=\"1100\" grid=\"0\" \
 gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" \
-pageScale=\"1\" pageWidth=\"{:.2}\" pageHeight=\"{:.2}\" math=\"0\" shadow=\"0\">\n      <root>\n\
+pageScale=\"1\" pageWidth=\"{}\" pageHeight=\"{}\" math=\"0\" shadow=\"0\">\n      <root>\n\
         <mxCell id=\"0\"/>\n        <mxCell id=\"1\" parent=\"0\"/>\n{body}      </root>\n    \
          </mxGraphModel>\n  </diagram>\n",
         esc(name),
         name.replace(|c: char| !c.is_alphanumeric() && c != '_', "_"),
-        pw,
-        ph,
+        page_num(pw),
+        page_num(ph),
     )
 }
 
@@ -371,6 +384,8 @@ mod tests {
     #[test]
     fn page_size_is_in_points() {
         let xml = book("t", &[("p".into(), laid("a = 1\n"))], &st());
+        assert!(xml.contains("pageWidth=\"595.276\""), "ширина не А4: {xml}");
+        assert!(xml.contains("pageHeight=\"841.89\""), "высота не А4: {xml}");
         let w: f64 = xml
             .split("pageWidth=\"")
             .nth(1)
@@ -385,5 +400,55 @@ mod tests {
             .expect("нет высоты листа");
         assert!((w - 595.276).abs() < 0.01, "ширина не А4: {w}");
         assert!((h - 841.89).abs() < 0.01, "высота не А4: {h}");
+    }
+
+    /// Управляющий символ (0x01) невалиден в XML 1.0: раньше он валил
+    /// разбор всего файла и в SVG, и в draw.io. Теперь — U+FFFD.
+    #[test]
+    fn control_chars_do_not_break_xml() {
+        let xml = book(
+            "t",
+            &[("p".into(), laid("output printf(\"a\u{1}b\")\n"))],
+            &st(),
+        );
+        assert!(!xml.contains('\u{1}'), "сырой 0x01 остался в XML");
+        assert!(xml.contains('\u{FFFD}'), "0x01 не заменён на U+FFFD");
+    }
+
+    /// Перевод строки в value — только `&#10;`: литеральный \n в атрибуте
+    /// XML-парсер схлопывает в пробел, и блок терял переносы.
+    #[test]
+    fn multiline_cell_keeps_line_breaks() {
+        let l = laid(
+            "if aaa > 0 && bbb > 0 && ccc > 0 && ddd > 0 && eee > 0 && fff > 0 && ggg > 0\n    \
+             да: printf(1)\n    нет: printf(2)\n",
+        );
+        let xml = book("t", &[("p".into(), l)], &st());
+        assert!(xml.contains("&#10;"), "нет числовой ссылки перевода строки");
+    }
+
+    /// source/target рёбер ссылаются на существующие mxCell: иначе draw.io
+    /// молча теряет стрелку.
+    #[test]
+    fn edge_endpoints_reference_existing_cells() {
+        let xml = book(
+            "t",
+            &[(
+                "p".into(),
+                laid("if a\n    да: printf(1)\n    нет: printf(2)\n"),
+            )],
+            &st(),
+        );
+        let ids: Vec<&str> = xml
+            .split("id=\"")
+            .skip(1)
+            .filter_map(|p| p.split('"').next())
+            .collect();
+        for key in ["source=\"", "target=\""] {
+            for part in xml.split(key).skip(1) {
+                let id = part.split('"').next().unwrap();
+                assert!(ids.contains(&id), "{key}{id}\" без ячейки");
+            }
+        }
     }
 }

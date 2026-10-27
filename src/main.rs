@@ -66,7 +66,7 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
     gostpadi serve [--port=N]
         локальный сервер (только 127.0.0.1) с JSON-дверью движка:
         POST /render — код -> страницы SVG, POST /lint — проверка,
-        POST /export?mode=1|2 — SVG в мм / draw.io; ?lang=c|gvn.
+        POST /export?mode=1|2|3 — SVG в мм / draw.io на схему / книга на пачку; ?lang=c|gvn.
 ";
 
 const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--no-fix] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
@@ -83,6 +83,7 @@ fn base_for(
     folder: bool,
     batch: bool,
     dup: bool,
+    same_dir: bool,
 ) -> PathBuf {
     let mut stem = Path::new(inp)
         .file_stem()
@@ -110,7 +111,26 @@ fn base_for(
     }
     match output {
         Some(o) if folder => PathBuf::from(o).join(format!("{stem}.svg")),
-        Some(o) if batch => Path::new(inp).parent().unwrap_or(Path::new("")).join(o),
+        // Пачка в один файл-базу: у входов из одной папки одинаковое
+        // имя out.svg затирало предыдущий — уникальный суффикс из
+        // вход/функции. У входов из разных папок имя остаётся прежним.
+        Some(o) if batch => {
+            let dir = Path::new(inp).parent().unwrap_or(Path::new(""));
+            if same_dir || fun.is_some() {
+                let p = Path::new(o);
+                let name = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "scheme".into());
+                let ext = p
+                    .extension()
+                    .map(|e| format!(".{}", e.to_string_lossy()))
+                    .unwrap_or_default();
+                dir.join(format!("{name}-{stem}{ext}"))
+            } else {
+                dir.join(o)
+            }
+        }
         // -o файл: у входа с функциями имя схемы — имя файла с суффиксом
         // функции, иначе все схемы писались в один -o и выживала последняя
         Some(o) if fun.is_some() => {
@@ -370,6 +390,15 @@ fn main() {
     let dup = stems
         .iter()
         .any(|s| stems.iter().filter(|t| *t == s).count() > 1);
+    // Один и тот же родитель у двух входов: голое `-o out.svg` иначе
+    // положило бы обе схемы в один файл и оставило последнюю.
+    let parents: Vec<PathBuf> = inputs
+        .iter()
+        .map(|i| Path::new(i).parent().unwrap_or(Path::new("")).to_path_buf())
+        .collect();
+    let same_dir = parents
+        .iter()
+        .any(|p| parents.iter().filter(|q| *q == p).count() > 1);
 
     let mut failed = parse_failed;
     // --trim и --drawio отдают по одному файлу на схему, без листа А4:
@@ -385,8 +414,16 @@ fn main() {
         let ext = if drawio { "drawio" } else { "svg" };
         for (scheme, data) in produced {
             let (inp, fun) = pipeline::scheme_parts(&scheme);
-            let base = base_for(inp, fun, output.as_deref(), folder, inputs.len() > 1, dup)
-                .with_extension(ext);
+            let base = base_for(
+                inp,
+                fun,
+                output.as_deref(),
+                folder,
+                inputs.len() > 1,
+                dup,
+                same_dir,
+            )
+            .with_extension(ext);
             if let Err(e) = std::fs::write(&base, data) {
                 eprintln!("не удалось записать {}: {e}", base.display());
                 failed = true;
@@ -402,7 +439,15 @@ fn main() {
 
     for (scheme, pages) in pipeline::render_batch(schemes, &st) {
         let (inp, fun) = pipeline::scheme_parts(&scheme);
-        let base = base_for(inp, fun, output.as_deref(), folder, inputs.len() > 1, dup);
+        let base = base_for(
+            inp,
+            fun,
+            output.as_deref(),
+            folder,
+            inputs.len() > 1,
+            dup,
+            same_dir,
+        );
         for (k, svg) in pages.iter().enumerate() {
             let target = page_path(&base, k);
             if let Err(e) = std::fs::write(&target, svg) {

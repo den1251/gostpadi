@@ -649,3 +649,273 @@ fn small_scale_warns() {
     let err = String::from_utf8_lossy(&st.stderr);
     assert!(err.contains("предупреждение: масштаб"), "{err}");
 }
+
+/// --drawio с `-o файл`: каждая функция получает свой файл, а не
+/// перезаписывает предыдущую (баг «все схемы в один -o»).
+#[test]
+fn drawio_output_file_keeps_function_schemes() {
+    let d = tmp("drawio-outfile");
+    let f = d.join("two.c");
+    fs::write(
+        &f,
+        "int add(int a, int b) { int s = a + b; return s; }\n\
+         int main(void) { printf(\"%d\", add(2, 3)); return 0; }\n",
+    )
+    .unwrap();
+    let out_path = d.join("book.drawio");
+    let out = run(&[
+        f.to_str().unwrap(),
+        "--drawio",
+        "-o",
+        out_path.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let main = fs::read_to_string(&out_path).unwrap();
+    let helper = fs::read_to_string(d.join("book-add.drawio")).unwrap();
+    assert!(
+        main.contains("<mxfile host=\"gostpadi\">"),
+        "main не mxfile"
+    );
+    assert!(
+        helper.contains("<mxfile host=\"gostpadi\">"),
+        "add не mxfile"
+    );
+    assert!(
+        helper.contains("id=\"title\" value=\"add(int a, int b)\""),
+        "нет подписи функции add"
+    );
+    assert!(!main.contains("id=\"title\""), "main подписан как функция");
+}
+
+/// Страницы draw.io — точки, лист ровно А4 (595.276×841.89), координаты
+/// не отрицательные: раскладка живёт вокруг нуля, без сдвига схема
+/// висела бы за краем листа.
+#[test]
+fn drawio_pages_are_a4_and_non_negative() {
+    let d = tmp("drawio-geom");
+    let f = d.join("two.c");
+    fs::write(
+        &f,
+        "int add(int a, int b) { int s = a + b; return s; }\n\
+         int main(void) { printf(\"%d\", add(2, 3)); return 0; }\n",
+    )
+    .unwrap();
+    let dir = d.join("o");
+    fs::create_dir_all(&dir).unwrap();
+    let out = run(&[f.to_str().unwrap(), "--drawio", "-o", dir.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for name in ["two.drawio", "two-add.drawio"] {
+        let xml = fs::read_to_string(dir.join(name)).unwrap();
+        assert_eq!(xml.matches("<diagram ").count(), 1, "{name}: листов");
+        assert!(xml.contains("pageWidth=\"595.276\""), "{name}: ширина");
+        assert!(xml.contains("pageHeight=\"841.89\""), "{name}: высота");
+        assert!(!xml.contains("x=\"-"), "{name}: отрицательный x");
+        assert!(!xml.contains("y=\"-"), "{name}: отрицательный y");
+    }
+}
+
+/// Управляющие символы в тексте: файл остаётся XML, 0x01 заменён на
+/// U+FFFD. Иначе draw.io/SVG не открываются целиком.
+#[test]
+fn control_chars_keep_export_xml_valid() {
+    let d = tmp("ctrl-chars");
+    let f = d.join("c.gvn");
+    fs::write(&f, b"output printf(\"a\x01b\")\n").unwrap();
+    let out = run(&[
+        f.to_str().unwrap(),
+        "--drawio",
+        "-o",
+        d.join("c.drawio").to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let xml = fs::read(d.join("c.drawio")).unwrap();
+    assert!(!xml.contains(&0x01), "сырой 0x01 остался в draw.io");
+    assert!(
+        String::from_utf8_lossy(&xml).contains('\u{FFFD}'),
+        "0x01 не заменён на U+FFFD"
+    );
+    let out = run(&[f.to_str().unwrap(), "-o", d.join("c.svg").to_str().unwrap()]);
+    assert!(out.status.success());
+    let svg = fs::read(d.join("c.svg")).unwrap();
+    assert!(!svg.contains(&0x01), "сырой 0x01 остался в SVG");
+}
+
+/// --font/--lw вне разумного диапазона: не паника и не 300-значные
+/// атрибуты, а зажатые значения.
+#[test]
+fn huge_font_and_lw_are_clamped() {
+    let d = tmp("huge-flags");
+    let f = d.join("h.gvn");
+    fs::write(&f, OK_GVN).unwrap();
+    let out = run(&[
+        f.to_str().unwrap(),
+        "--font=1e300",
+        "--lw=1e300",
+        "-o",
+        d.join("h.svg").to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let svg = fs::read_to_string(d.join("h.svg")).unwrap();
+    assert!(svg.contains("font-size=\"200\""), "кегль не зажат");
+    assert!(svg.contains("stroke-width=\"20\""), "перо не зажато");
+    assert!(
+        !svg.contains("NaN") && !svg.contains("inf"),
+        "в SVG NaN/inf"
+    );
+    let out = run(&[
+        f.to_str().unwrap(),
+        "--font=1e300",
+        "--drawio",
+        "-o",
+        d.join("h.drawio").to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "drawio: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// `-o` с несуществующим родителем: внятная ошибка и код 1, без паники.
+#[test]
+fn output_without_parent_dir_exits_one() {
+    let d = tmp("no-parent");
+    let f = d.join("in.gvn");
+    fs::write(&f, OK_GVN).unwrap();
+    let out = run(&[
+        f.to_str().unwrap(),
+        "-o",
+        d.join("nope/deep/out.svg").to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("не удалось записать"), "stderr: {err}");
+    assert!(!err.contains("panicked"), "паника: {err}");
+}
+
+/// Фронтенд-регрессии из отчёта: #define не попадает в схему, scanf_s —
+/// ввод, const-параметр в подписи, do-while/switch/continue/break,
+/// вложенные if и длинное условие рисуются и проходят --check.
+#[test]
+fn frontend_regressions_draw_and_check() {
+    let d = tmp("frontend");
+    let f = d.join("f.c");
+    fs::write(
+        &f,
+        "\
+#include <stdio.h>
+#define SQR(x) ((x) * (x))
+#define LIMIT 10
+int helper(const int a[], int n) {
+    int i, s = 0;
+    for (i = 0; i < n; i++) { s = s + a[i]; }
+    return s;
+}
+int main(void) {
+    int v[2] = {1, 2}, i = 0, k = 0, a = 1, b = 2;
+    scanf_s(\"%d\", &k);
+    do { i++; if (i == 2) continue; } while (i < 4);
+    switch (k) {
+        case 1: printf(\"one\"); break;
+        case 2: printf(\"two\"); break;
+        default: printf(\"many\"); break;
+    }
+    while (1) { if (k > LIMIT) break; k++; }
+    if (a > 0) { if (b > 0) { printf(\"both\"); } else { printf(\"b\"); } }
+    if (a > 0 && b > 0 && (a + b) * 2 < 100 && a != b && SQR(a) < 100) {
+        printf(\"%d\", helper(v, 2));
+    }
+    return 0;
+}",
+    )
+    .unwrap();
+    let chk = run(&["--check", f.to_str().unwrap()]);
+    assert!(
+        chk.status.success(),
+        "--check: {}",
+        String::from_utf8_lossy(&chk.stderr)
+    );
+    let dir = d.join("o");
+    fs::create_dir_all(&dir).unwrap();
+    let out = run(&[f.to_str().unwrap(), "--drawio", "-o", dir.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let main = fs::read_to_string(dir.join("f.drawio")).unwrap();
+    assert!(!main.contains("#define"), "директива #define на схеме");
+    assert!(!main.contains("#include"), "директива #include на схеме");
+    assert!(main.contains("scanf_s"), "scanf_s потерян");
+    assert!(main.contains("do while"), "do-while потерян");
+    assert!(main.contains("&#10;"), "длинное условие не перенесено");
+    // scanf_s — ввод: ячейка с ним имеет форму параллелограмма
+    let cell = main
+        .split("<mxCell ")
+        .find(|c| c.contains("scanf_s"))
+        .expect("нет ячейки scanf_s");
+    assert!(
+        cell.contains("shape=parallelogram"),
+        "scanf_s не ввод: {cell}"
+    );
+    let helper = fs::read_to_string(dir.join("f-helper.drawio")).unwrap();
+    assert!(
+        helper.contains("value=\"helper(const int a[], int n)\""),
+        "нет const-подписи helper"
+    );
+}
+
+/// Пачка из одной папки с голым `-o out.svg`: раньше обе схемы писались
+/// в один out.svg и оставалась последняя. Теперь у каждой свой суффикс,
+/// функции одного входа тоже не затирают друг друга.
+#[test]
+fn batch_same_dir_bare_o_keeps_every_scheme() {
+    let d = tmp("same-dir-o");
+    fs::write(d.join("x.gvn"), "x = 1\n").unwrap();
+    fs::write(d.join("y.gvn"), "y = 2\n").unwrap();
+    fs::write(
+        d.join("two.c"),
+        "int add(int a, int b) { int s = a + b; return s; }\n\
+         int main(void) { printf(\"%d\", add(2, 3)); return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_gostpadi"))
+        .args(["x.gvn", "y.gvn", "two.c", "-o", "out.svg"])
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!d.join("out.svg").exists(), "out.svg всё ещё общий");
+    let x = fs::read_to_string(d.join("out-x.svg")).unwrap();
+    let y = fs::read_to_string(d.join("out-y.svg")).unwrap();
+    assert!(
+        x.contains("x = 1") && !x.contains("y = 2"),
+        "out-x не та схема"
+    );
+    assert!(
+        y.contains("y = 2") && !y.contains("x = 1"),
+        "out-y не та схема"
+    );
+    assert!(d.join("out-two.svg").exists(), "main two.c потерян");
+    assert!(d.join("out-two-add.svg").exists(), "add two.c потерян");
+}

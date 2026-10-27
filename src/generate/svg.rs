@@ -22,6 +22,12 @@ const TITLE_INSET_FRAC: f64 = 0.25;
 /// Число без хвостовых нулей прямо в буфер: 14.170 -> "14.17", 1.000 -> "1",
 /// -0.000 -> "0". Ни одной промежуточной String — только запись в `out`.
 pub(crate) fn put(out: &mut String, v: f64) {
+    // NaN/∞ в атрибуте — невалидный SVG; раскладка их не рождает, но
+    // экспорт обязан оставаться XML даже при больном входе.
+    if !v.is_finite() {
+        out.push('0');
+        return;
+    }
     let start = out.len();
     let _ = write!(out, "{v:.3}");
     let mut end = out.len();

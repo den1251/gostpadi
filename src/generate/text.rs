@@ -6,14 +6,23 @@ use crate::style::Style;
 
 const FONT_FAMILY: &str = "DejaVu Sans Mono, monospace";
 
+/// Символ допустим в XML 1.0 (Char production). Управляющие вроде 0x01
+/// валят разбор всего файла, а не только испорченной подписи.
+pub(crate) fn xml_ok(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r')
+        || matches!(c, '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+}
+
 /// XML-экранирование прямо в буфер, посимвольно: без трёх проходов
-/// `replace` и без промежуточных String.
+/// `replace` и без промежуточных String. Недопустимые в XML символы
+/// заменяются на U+FFFD: ввод не должен ломать файл схемы.
 pub(crate) fn esc(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
+            c if !xml_ok(c) => out.push('\u{FFFD}'),
             _ => out.push(c),
         }
     }

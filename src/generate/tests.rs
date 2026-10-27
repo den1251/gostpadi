@@ -345,3 +345,23 @@ fn text_escaped_and_centered() {
     // двухстрочный текст: первый tspan поднят на полшага
     assert!(svg.contains("<tspan"), "нет tspan");
 }
+
+/// Управляющий символ в тексте не должен ломать XML: SVG-парсер видит
+/// 0x01 как invalid token и не показывает ни схему, ни страницу.
+#[test]
+fn control_chars_are_replaced_in_svg() {
+    let mut s = sh("act", 100.0, 100.0, 90.0, 30.0, 0.0);
+    s.lines = vec!["a\u{1}b".into()];
+    let svg = render_svg(&hand(vec![s], vec![], vec![]), &Style::default());
+    assert!(!svg.contains('\u{1}'), "сырой 0x01 остался в SVG");
+    assert!(svg.contains('\u{FFFD}'), "0x01 не заменён на U+FFFD");
+}
+
+/// NaN/∞ в координатах — невалидный SVG; put обязан писать число.
+#[test]
+fn put_never_writes_non_finite() {
+    let mut out = String::new();
+    super::svg::put(&mut out, f64::NAN);
+    super::svg::put(&mut out, f64::INFINITY);
+    assert_eq!(out, "00");
+}

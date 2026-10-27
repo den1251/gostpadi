@@ -7,7 +7,8 @@
 //!   GET  /health → ok
 //!   POST /render?lang=c|gvn&labels=ru|en&font=&lw=&no_split=1   body=код
 //!   POST /lint?lang=…  — инварианты раскладки (аналог CLI --check)
-//!   POST /export?mode=1|2&lang=… — 1: SVG в мм, 2: draw.io
+//!   POST /export?mode=1|2|3&lang=… — 1: SVG в мм, 2: draw.io на схему,
+//!                                  3: одна книга draw.io на всю пачку
 //!
 //! lang — язык входа: по умолчанию «c», для .gvn укажи lang=gvn.
 //! Пачечная семантика как у CLI: сбойный вход не роняет ответ —
@@ -31,7 +32,7 @@ pub fn serve(port: u16) {
     println!("GET  /health  — жив ли");
     println!("POST /render  — код -> страницы SVG (JSON, как у сайта)");
     println!("POST /lint    — проверка схемы без рисования");
-    println!("POST /export  — mode=1: SVG в мм, mode=2: draw.io");
+    println!("POST /export  — mode=1: SVG в мм, mode=2: draw.io, mode=3: книга на пачку");
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
@@ -45,6 +46,10 @@ pub fn serve(port: u16) {
 /// Один HTTP-запрос: читаем заголовки, ждём ровно Content-Length тела,
 /// роутим, отвечаем и закрываем соединение.
 fn handle(mut stream: TcpStream) {
+    // Локальный клиент, который замолчал на середине запроса, не должен
+    // держать поток сервера вечно: заголовок/тело ждём ограниченное время.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     let head_end = loop {
@@ -192,6 +197,12 @@ fn esc(s: &str) -> String {
 }
 
 pub fn route(request_line: &str, body: &[u8]) -> (u16, String) {
+    enum Mode {
+        Tight,
+        Drawio,
+        Book,
+    }
+
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let target = parts.next().unwrap_or("/");
@@ -217,6 +228,26 @@ pub fn route(request_line: &str, body: &[u8]) -> (u16, String) {
             format!("{{\"ok\":false,\"msg\":\"метод {method} не подходит: нужен POST\"}}"),
         );
     }
+    // Параметры режима проверяются до разбора тела: кривой mode — ошибка
+    // запроса (400), даже если код внутри тоже не разбирается.
+    let export_mode = if path == "/export" {
+        match q.get("mode").map(String::as_str) {
+            Some("2") => Some(Mode::Drawio),
+            Some("3") => Some(Mode::Book),
+            Some("1") | None => Some(Mode::Tight),
+            Some(other) => {
+                return (
+                    400,
+                    format!(
+                        "{{\"ok\":false,\"error\":\"mode: только 1|2|3, получено {}\"}}",
+                        esc(other)
+                    ),
+                )
+            }
+        }
+    } else {
+        None
+    };
     let text = match std::str::from_utf8(body) {
         Ok(t) => t,
         Err(_) => {
@@ -272,26 +303,7 @@ pub fn route(request_line: &str, body: &[u8]) -> (u16, String) {
             (200, pipeline::batch_json(&pages, &[], &[]))
         }
         "/export" => {
-            #[derive(PartialEq)]
-            enum Mode {
-                Tight,
-                Drawio,
-                Book,
-            }
-            let mode = match q.get("mode").map(String::as_str) {
-                Some("2") => Mode::Drawio,
-                Some("3") => Mode::Book,
-                Some("1") | None => Mode::Tight,
-                Some(other) => {
-                    return (
-                        400,
-                        format!(
-                            "{{\"ok\":false,\"error\":\"mode: только 1|2|3, получено {}\"}}",
-                            esc(other)
-                        ),
-                    )
-                }
-            };
+            let mode = export_mode.expect("mode проверен выше");
             // mode=3 — одна книга на всю пачку: столько же страниц,
             // сколько SVG-листов, но в одном файле
             let out: Vec<(String, Vec<String>)> = match mode {
@@ -386,5 +398,144 @@ mod tests {
         let (s, b) = post("/render?lang=asm", "nop");
         assert_eq!(s, 400);
         assert!(b.contains("lang=asm"));
+    }
+
+    /// mode проверяется до разбора тела: мусорный код не маскирует
+    /// опечатку в режиме экспорта.
+    #[test]
+    fn invalid_mode_is_400_before_parse() {
+        let (s, b) = post("/export?mode=9", "не Си");
+        assert_eq!(s, 400, "{b}");
+        assert!(b.contains("mode"), "{b}");
+    }
+
+    /// mode=3 — одна книга на всю пачку: схемы и их листы становятся
+    /// страницами одного файла.
+    #[test]
+    fn export_mode_3_is_one_book_with_pages() {
+        let src = "int add(int a, int b) { int s = a + b; return s; }\n\
+                   int mul(int a, int b) { int p = a * b; return p; }\n\
+                   int main(void) { printf(\"%d\", add(1, 2)); return 0; }\n";
+        let (s, b) = post("/export?mode=3", src);
+        assert_eq!(s, 200);
+        assert!(b.contains("\"name\":\"schemes.drawio\""), "{b}");
+        assert_eq!(b.matches("<diagram ").count(), 3, "три схемы — три листа");
+        assert!(b.contains("pageWidth=\\\"595.276\\\""), "нет точного А4");
+        assert!(
+            b.contains("id=\\\"title\\\" value=\\\"add(int a, int b)\\\""),
+            "нет подписи функции"
+        );
+    }
+
+    /// Не-UTF8 тело — 400, а не паника from_utf8.
+    #[test]
+    fn non_utf8_body_is_400() {
+        let (s, b) = route("POST /render HTTP/1.1", &[0xff, 0xfe, 0x80]);
+        assert_eq!(s, 400);
+        assert!(b.contains("UTF-8"), "{b}");
+    }
+
+    /// Пустой вход — не 500: движок отвечает 200 и человеческой ошибкой.
+    #[test]
+    fn empty_input_is_reported_not_crash() {
+        let (s, b) = post("/render?lang=gvn", "");
+        assert_eq!(s, 200);
+        assert!(b.contains("\"errors\":[{"), "{b}");
+        assert!(b.contains("схема пустая"), "{b}");
+    }
+
+    /// mode=1 — SVG по содержимому в миллиметрах, без вписывания.
+    #[test]
+    fn export_mode_1_is_tight_svg_in_mm() {
+        let (s, b) = post("/export?mode=1&lang=gvn", "x = 1\noutput printf(1)\n");
+        assert_eq!(s, 200);
+        assert!(b.contains("mm\\\""), "нет миллиметров: {b}");
+        assert!(!b.contains("scale("), "tight-экспорт с вписыванием");
+    }
+
+    /// font=inf раньше ронял поток раскладки (пустой ответ), NaN писал
+    /// в SVG. Теперь — конечный дефолт.
+    #[test]
+    fn non_finite_font_and_lw_stay_finite() {
+        for q in ["/render?lang=gvn&font=inf", "/render?lang=gvn&lw=inf"] {
+            let (s, b) = post(q, "x = 1\n");
+            assert_eq!(s, 200, "{q}");
+            assert!(!b.contains("NaN") && !b.contains("inf"), "{q}: {b}");
+        }
+    }
+
+    /// Сырой HTTP: статусы, обрыв тела и таймаут засыпавшего клиента.
+    mod http {
+        use super::*;
+        use std::io::{Read, Write};
+        use std::net::{Shutdown, TcpListener};
+        use std::time::Duration;
+
+        /// Запускает handle() на эфемерном порту; возвращает адрес и
+        /// обработчик потока.
+        fn server() -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = l.local_addr().unwrap();
+            let t = std::thread::spawn(move || {
+                let (s, _) = l.accept().unwrap();
+                handle(s);
+            });
+            (addr, t)
+        }
+
+        fn send(addr: std::net::SocketAddr, raw: &[u8], shutdown: bool) -> String {
+            let mut c = std::net::TcpStream::connect(addr).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            c.write_all(raw).unwrap();
+            if shutdown {
+                c.shutdown(Shutdown::Write).unwrap();
+            }
+            let mut out = Vec::new();
+            let _ = c.read_to_end(&mut out);
+            String::from_utf8_lossy(&out).into_owned()
+        }
+
+        #[test]
+        fn oversized_header_431_and_body_413() {
+            let (addr, t) = server();
+            let mut req = b"GET /health HTTP/1.1\r\nX: ".to_vec();
+            req.extend(std::iter::repeat_n(b'a', 70 * 1024));
+            assert!(send(addr, &req, false).starts_with("HTTP/1.1 431"));
+            t.join().unwrap();
+
+            let (addr, t) = server();
+            let r = send(
+                addr,
+                b"POST /render HTTP/1.1\r\nContent-Length: 5000000\r\n\r\n",
+                false,
+            );
+            assert!(r.starts_with("HTTP/1.1 413"), "{r}");
+            t.join().unwrap();
+        }
+
+        #[test]
+        fn truncated_body_is_400() {
+            let (addr, t) = server();
+            let r = send(
+                addr,
+                b"POST /render HTTP/1.1\r\nContent-Length: 100\r\n\r\n0123456789",
+                true,
+            );
+            assert!(r.starts_with("HTTP/1.1 400"), "{r}");
+            t.join().unwrap();
+        }
+
+        /// Клиент замолчал на середине заголовка: поток не должен
+        /// висеть вечно, соединение закрывается по таймауту.
+        #[test]
+        fn silent_client_does_not_leak_thread() {
+            let (addr, t) = server();
+            let mut c = std::net::TcpStream::connect(addr).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+            c.write_all(b"GET /health HTTP/1.1\r\nX: partial").unwrap();
+            let mut out = Vec::new();
+            let _ = c.read_to_end(&mut out);
+            t.join().expect("поток сервера завис на молчащем клиенте");
+        }
     }
 }
