@@ -1,7 +1,6 @@
 //! Сборка пайплайна: текст (.gvn или C) -> узлы -> страницы SVG.
 //! Геометрия живёт в layout, отрисовка в generate; здесь только склейка.
 
-use crate::drawio::book;
 use crate::error::ParseError;
 use crate::frontend::c::c_to_gvn_functions_full;
 use crate::frontend::gvn::parse;
@@ -174,23 +173,44 @@ pub fn render_tight_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Stri
 }
 
 /// Книга draw.io по той же пачке: один файл со всеми листами.
+/// Имя файла схемы без расширения — заголовок страницы draw.io.
+fn stem_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Страницы одной схемы -> имя книги: «main» или «main — сигнатура».
+fn book_title(stem: &str, pages: &[Layout]) -> String {
+    match pages.first().and_then(|l| l.title.clone()) {
+        Some(t) => format!("{stem} — {t}"),
+        None => stem.to_string(),
+    }
+}
+
 pub fn render_drawio_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, String)> {
-    export_layouts(schemes.clone(), st)
-        .into_iter()
-        .map(|(path, parts)| {
-            let stem = std::path::Path::new(&path)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.clone());
-            let numbered: Vec<(String, Layout)> = parts
-                .iter()
-                .enumerate()
-                .map(|(i, l)| (format!("Лист {}", i + 1), l.clone()))
-                .collect();
-            let xml = book(&stem, &numbered, st);
-            (path, xml)
+    let (laid, _) = paginate(&schemes, st);
+    laid.into_iter()
+        .map(|(path, pages)| {
+            let name = book_title(&stem_of(&path), &pages);
+            // имена страниц даёт book(): лист 1..N добавляется сам
+            let named: Vec<(String, Layout)> =
+                pages.into_iter().map(|l| (String::new(), l)).collect();
+            (path, crate::drawio::book(&name, &named, st))
         })
         .collect()
+}
+
+/// Вся пачка — в одну книгу draw.io: каждая схема и каждый её лист
+/// отдельной страницей. Один файл на всю лабу вместо папки обрывков.
+pub fn render_drawio_book(schemes: Vec<Scheme>, st: &Style) -> String {
+    let (laid, _) = paginate(&schemes, st);
+    let sections: Vec<(String, Vec<Layout>)> = laid
+        .into_iter()
+        .map(|(path, pages)| (book_title(&stem_of(&path), &pages), pages))
+        .collect();
+    crate::drawio::book_all(&sections, st)
 }
 
 /// Склеивает части порезки в одну раскладку: вертикальные смещения
@@ -251,21 +271,33 @@ fn join_parts(parts: &[Layout]) -> Layout {
 /// лист ужимает общий масштаб); размеры фигур и масштаб общие на всю
 /// пачку: figures одного типа во всех файлах — одного визуального размера.
 pub fn render_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Vec<String>)> {
+    let (laid, s) = paginate(&schemes, st);
+    laid.into_iter()
+        .map(|(path, pages)| {
+            let pages = pages.iter().map(|l| render_svg_at(l, st, s)).collect();
+            (path, pages)
+        })
+        .collect()
+}
+
+/// Постраничная раскладка пачки и её единый масштаб.
+///
+/// Масштаб пачки — минимум постраничных вписываний, и рез идёт под
+/// него: бюджет листа = А4/масштаб. При бюджете 1.0 лист режется на
+/// 672pt и рисуется на 0.22 — четыре пятых А4 пустые.
+///
+/// Эталон реза (бюджет 1.0) — верхняя граница масштаба: заполнение не
+/// должно стоить кегля. У высокой узкой схемы слияние листов дало бы
+/// 0.22 вместо 1.0 — лучше лишний лист, чем нечитаемая схема. А у
+/// схемы, упёршейся в ширину листа, масштаб задан шириной и от числа
+/// листов не зависит — там заполнение бесплатно.
+fn paginate(schemes: &[Scheme], st: &Style) -> (Vec<(String, Vec<Layout>)>, f64) {
     let normed: Vec<Sizes> = schemes.iter().map(|s| normalize(&s.nodes, st)).collect();
     let sizes = uniform_sizes(&normed);
-    // Масштаб пачки — минимум постраничных вписываний, и рез идёт под
-    // него: бюджет листа = А4/масштаб. При бюджете 1.0 лист режется на
-    // 672pt и рисуется на 0.22 — четыре пятых А4 пустые.
-    //
-    // Эталон реза (бюджет 1.0) — верхняя граница масштаба: заполнение не
-    // должно стоить кегля. У высокой узкой схемы слияние листов дало бы
-    // 0.22 вместо 1.0 — лучше лишний лист, чем нечитаемая схема. А у
-    // схемы, упёршейся в ширину листа, масштаб задан шириной и от числа
-    // листов не зависит — там заполнение бесплатно.
-    let ref_laid = laid_pages(&schemes, &sizes, st, 1.0);
+    let ref_laid = laid_pages(schemes, &sizes, st, 1.0);
     let s_ref = batch_scale(&ref_laid, st);
     let mut cut = st.split_min;
-    let mut laid = laid_pages(&schemes, &sizes, st, cut);
+    let mut laid = laid_pages(schemes, &sizes, st, cut);
     let mut s = batch_scale(&laid, st);
     // масштаб выше бюджета реза — листы и так полные; ниже — лист
     // упёрся в ширину и недозаполнен по высоте: перерезать под
@@ -275,7 +307,7 @@ pub fn render_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Vec<String
             break;
         }
         cut = s;
-        laid = laid_pages(&schemes, &sizes, st, cut);
+        laid = laid_pages(schemes, &sizes, st, cut);
         s = batch_scale(&laid, st);
     }
     if s < s_ref * 0.97 {
@@ -291,12 +323,7 @@ pub fn render_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Vec<String
             st.font * s
         );
     }
-    laid.into_iter()
-        .map(|(path, pages)| {
-            let pages = pages.iter().map(|l| render_svg_at(l, st, s)).collect();
-            (path, pages)
-        })
-        .collect()
+    (laid, s)
 }
 
 /// Постраничная раскладка пачки с бюджетом листа А4/`scale`.

@@ -272,29 +272,41 @@ pub fn route(request_line: &str, body: &[u8]) -> (u16, String) {
             (200, pipeline::batch_json(&pages, &[], &[]))
         }
         "/export" => {
-            let want_drawio = match q.get("mode").map(String::as_str) {
-                Some("2") => true,
-                Some("1") | None => false,
+            #[derive(PartialEq)]
+            enum Mode {
+                Tight,
+                Drawio,
+                Book,
+            }
+            let mode = match q.get("mode").map(String::as_str) {
+                Some("2") => Mode::Drawio,
+                Some("3") => Mode::Book,
+                Some("1") | None => Mode::Tight,
                 Some(other) => {
                     return (
                         400,
                         format!(
-                            "{{\"ok\":false,\"error\":\"mode: только 1|2, получено {}\"}}",
+                            "{{\"ok\":false,\"error\":\"mode: только 1|2|3, получено {}\"}}",
                             esc(other)
                         ),
                     )
                 }
             };
-            let out: Vec<(String, Vec<String>)> = if want_drawio {
-                pipeline::render_drawio_batch(schemes, &st)
+            // mode=3 — одна книга на всю пачку: столько же страниц,
+            // сколько SVG-листов, но в одном файле
+            let out: Vec<(String, Vec<String>)> = match mode {
+                Mode::Book => vec![(
+                    "schemes.drawio".to_string(),
+                    vec![pipeline::render_drawio_book(schemes, &st)],
+                )],
+                Mode::Drawio => pipeline::render_drawio_batch(schemes, &st)
                     .into_iter()
                     .map(|(n, xml)| (n, vec![xml]))
-                    .collect()
-            } else {
-                pipeline::render_tight_batch(schemes, &st)
+                    .collect(),
+                Mode::Tight => pipeline::render_tight_batch(schemes, &st)
                     .into_iter()
                     .map(|(n, svg)| (n, vec![svg]))
-                    .collect()
+                    .collect(),
             };
             (200, pipeline::batch_json(&out, &[], &[]))
         }

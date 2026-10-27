@@ -63,25 +63,25 @@ fn edge_style(st: &Style) -> String {
 }
 
 /// Блок фигуры целиком в mxCell.
-fn cell(id: &str, sh: &Shape, st: &Style) -> String {
+fn cell(id: &str, sh: &Shape, st: &Style, off: (f64, f64)) -> String {
     let text = esc(&sh.lines.join("\n"));
     format!(
         "        <mxCell id=\"{id}\" value=\"{text}\" style=\"{}\" vertex=\"1\" parent=\"1\">\
          \n          <mxGeometry x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" as=\"geometry\"/>\
          \n        </mxCell>",
         shape_style(&sh.kind, st).replace('"', "&quot;"),
-        sh.cx - sh.w / 2.0,
-        sh.cy - sh.h / 2.0,
+        sh.cx - sh.w / 2.0 + off.0,
+        sh.cy - sh.h / 2.0 + off.1,
         sh.w,
         sh.h,
     )
 }
 
 /// Ломаная ребра в mxPoint. Единицы — пункты.
-fn waypoints(points: &[(f64, f64)]) -> String {
+fn waypoints(points: &[(f64, f64)], off: (f64, f64)) -> String {
     let pts: Vec<String> = points
         .iter()
-        .map(|(x, y)| format!("<mxPoint x=\"{x:.2}\" y=\"{y:.2}\"/>"))
+        .map(|(x, y)| format!("<mxPoint x=\"{:.2}\" y=\"{:.2}\"/>", x + off.0, y + off.1))
         .collect();
     if pts.is_empty() {
         return String::new();
@@ -109,7 +109,7 @@ fn block_at(layout: &Layout, p: (f64, f64)) -> Option<String> {
 /// Подписи ветвей — отдельными текстовыми блоками: в draw.io метки на
 /// ребре привязываются к ребру, а не висят в координатах, и при
 /// переносе схемы они остаются со своим ребром.
-fn label_cell(id: &str, lb: &crate::layout::Label, st: &Style) -> String {
+fn label_cell(id: &str, lb: &crate::layout::Label, st: &Style, off: (f64, f64)) -> String {
     let align = match lb.ha.as_str() {
         "left" => "left",
         "right" => "right",
@@ -123,14 +123,30 @@ fn label_cell(id: &str, lb: &crate::layout::Label, st: &Style) -> String {
          \n        </mxCell>",
         esc(&lb.text),
         st.font.round(),
-        lb.x - w / 2.0,
-        lb.y - st.font,
+        lb.x - w / 2.0 + off.0,
+        lb.y - st.font + off.1,
         st.font * 1.4,
     )
 }
 
+/// Сдвиг содержимого в положительные координаты и размер листа.
+///
+/// Раскладка живёт вокруг нуля (рельсы уходят в минус по x), а страница
+/// draw.io начинается с (0,0): без сдвига схема висела бы за краем.
+/// Лист не меньше А4: в отчёт его вставляют как страницу, а не как
+/// обрезок; если схема больше — лист растёт по содержимому, чтобы
+/// ничего не пропало.
+fn page_geom(l: &Layout, st: &Style) -> ((f64, f64), (f64, f64)) {
+    let (x0, y0, w, h) = crate::generate::svg::doc_bounds(l, st);
+    let m = 2.0 * st.grid;
+    let pw = (w + 2.0 * m).max(PAGE_W);
+    let ph = (h + 2.0 * m).max(PAGE_H);
+    ((m - x0, m - y0), (pw, ph))
+}
+
 /// Лист раскладки -> один `<diagram>`.
 fn diagram(name: &str, layout: &Layout, st: &Style) -> String {
+    let (off, (pw, ph)) = page_geom(layout, st);
     let mut body = String::new();
     // подпись функции над схемой — тот же «предопределённый процесс», что и
     // в SVG: без него в draw.io не видно, какая схема какой функции
@@ -141,8 +157,8 @@ fn diagram(name: &str, layout: &Layout, st: &Style) -> String {
             .min_by(|a, b| a.cy.partial_cmp(&b.cy).unwrap_or(std::cmp::Ordering::Equal))
         {
             let (w, h) = crate::layout::measure(st, "act", title);
-            let x = top.cx - w / 2.0;
-            let y = top.cy - top.h / 2.0 - 2.0 * st.grid - h;
+            let x = top.cx - w / 2.0 + off.0;
+            let y = top.cy - top.h / 2.0 - 2.0 * st.grid - h + off.1;
             body.push_str(&format!(
                 "        <mxCell id=\"title\" value=\"{}\" style=\"rounded=0;html=1;fontFamily=DejaVu Sans Mono;fontSize={};fillColor=#ffffff;strokeColor=#000000;\" vertex=\"1\" parent=\"1\">\n          <mxGeometry x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" as=\"geometry\"/>\n        </mxCell>\n",
                 esc(title), st.font.round(), x, y, w, h
@@ -150,7 +166,7 @@ fn diagram(name: &str, layout: &Layout, st: &Style) -> String {
         }
     }
     for (i, sh) in layout.shapes.iter().enumerate() {
-        body.push_str(&cell(&format!("n{i}"), sh, st));
+        body.push_str(&cell(&format!("n{i}"), sh, st, off));
         body.push('\n');
     }
     for (i, e) in layout.edges.iter().enumerate() {
@@ -168,24 +184,24 @@ fn diagram(name: &str, layout: &Layout, st: &Style) -> String {
             "        <mxCell id=\"{id}\" style=\"{}\" edge=\"1\" parent=\"1\" {attrs}>\n            \
              {}\n        </mxCell>\n",
             edge_style(st).replace('"', "&quot;"),
-            waypoints(&e.points),
+            waypoints(&e.points, off),
         ));
     }
     for (i, lb) in layout.labels.iter().enumerate() {
-        body.push_str(&label_cell(&format!("t{i}"), lb, st));
+        body.push_str(&label_cell(&format!("t{i}"), lb, st, off));
         body.push('\n');
     }
 
     format!(
         "  <diagram name=\"{}\" id=\"{}\">\n    <mxGraphModel dx=\"850\" dy=\"1100\" grid=\"0\" \
 gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" \
-pageScale=\"1\" pageWidth=\"{:.0}\" pageHeight=\"{:.0}\" math=\"0\" shadow=\"0\">\n      <root>\n\
+pageScale=\"1\" pageWidth=\"{:.2}\" pageHeight=\"{:.2}\" math=\"0\" shadow=\"0\">\n      <root>\n\
         <mxCell id=\"0\"/>\n        <mxCell id=\"1\" parent=\"0\"/>\n{body}      </root>\n    \
          </mxGraphModel>\n  </diagram>\n",
         esc(name),
         name.replace(|c: char| !c.is_alphanumeric() && c != '_', "_"),
-        PAGE_W,
-        PAGE_H,
+        pw,
+        ph,
     )
 }
 
@@ -193,14 +209,43 @@ pageScale=\"1\" pageWidth=\"{:.0}\" pageHeight=\"{:.0}\" math=\"0\" shadow=\"0\"
 pub fn book(name: &str, pages: &[(String, Layout)], st: &Style) -> String {
     let mut out =
         String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mxfile host=\"gostpadi\">\n");
-    for (i, (_, layout)) in pages.iter().enumerate() {
-        let page_name = if pages.len() == 1 {
+    for (i, (page_name, layout)) in pages.iter().enumerate() {
+        let fallback = if pages.len() == 1 {
             name.to_string()
         } else {
             format!("{name} — лист {}", i + 1)
         };
+        let page_name = if page_name.trim().is_empty() {
+            fallback
+        } else {
+            page_name.clone()
+        };
         out.push_str(&diagram(&page_name, layout, st));
         out.push('\n');
+    }
+    out.push_str("</mxfile>\n");
+    out
+}
+
+/// Одна книга на всю лабу: каждая схема и каждый её лист — отдельная
+/// страница draw.io. Так «скачать draw.io» даёт один файл, в котором
+/// открываются сразу все схемы отчёта, а не папка обрывков.
+pub fn book_all(sections: &[(String, Vec<Layout>)], st: &Style) -> String {
+    let total: usize = sections.iter().map(|(_, p)| p.len()).sum();
+    let mut out =
+        String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mxfile host=\"gostpadi\">\n");
+    for (stem, pages) in sections {
+        for (i, layout) in pages.iter().enumerate() {
+            let name = if total <= 1 {
+                stem.clone()
+            } else if pages.len() == 1 {
+                stem.clone()
+            } else {
+                format!("{stem} — лист {}", i + 1)
+            };
+            out.push_str(&diagram(&name, layout, st));
+            out.push('\n');
+        }
     }
     out.push_str("</mxfile>\n");
     out
@@ -238,24 +283,27 @@ mod tests {
 
     /// Координаты в mxGeometry — левый верхний угол, а в раскладке
     /// центр. Знак минуса здесь дал бы блоки, зеркально уехавшие за
-    /// край листа.
+    /// край листа. Раскладка живёт вокруг нуля, поэтому в файл она
+    /// попадает сдвинутой в положительные координаты.
     #[test]
     fn geometry_uses_top_left_corner() {
         let l = laid("x = 1\n");
-        let want_x = l
+        let st = st();
+        let (x0, _, _, _) = crate::generate::svg::doc_bounds(&l, &st);
+        let off = 2.0 * st.grid - x0;
+        let want = l
             .shapes
             .iter()
             .find(|s| s.kind == "act")
-            .map(|s| s.cx - s.w / 2.0);
-        let cx = l.shapes.iter().find(|s| s.kind == "act").map(|s| s.cx);
-        let xml = book("t", &[("p".into(), l)], &st());
-        if let Some(want_x) = want_x {
-            assert!(
-                xml.contains(&format!("x=\"{want_x:.2}\"")),
-                "в mxGeometry ожидался левый край {want_x:.2}"
-            );
-        }
-        assert!(cx.expect("нет блока") >= 0.0, "центр блока отрицателен");
+            .map(|s| s.cx - s.w / 2.0 + off)
+            .expect("нет блока");
+        assert!(want > 0.0, "блок должен быть в положительных координатах");
+        let xml = book("t", &[("p".into(), l)], &st);
+        assert!(
+            xml.contains(&format!("x=\"{want:.2}\"")),
+            "в mxGeometry ожидался левый край {want:.2}"
+        );
+        assert!(!xml.contains("x=\"-"), "в файле остались отрицательные x");
     }
 
     /// Рёбра уезжают за нижний край и должны привязаться к блокам,
@@ -304,12 +352,13 @@ mod tests {
     }
 
     /// Каждый лист схемы — свой diagram: иначе в draw.io останется
-    /// только последний.
+    /// только последний. Имена листов строит книга, если странице имя
+    /// не задано (так их зовёт pipeline).
     #[test]
     fn every_page_becomes_its_diagram() {
         let l1 = laid("a = 1\n");
         let l2 = laid("b = 2\n");
-        let xml = book("схема", &[("1".into(), l1), ("2".into(), l2)], &st());
+        let xml = book("схема", &[(String::new(), l1), (String::new(), l2)], &st());
         assert_eq!(xml.matches("<diagram ").count(), 2, "листов должно быть 2");
         assert!(
             xml.contains("лист 1") && xml.contains("лист 2"),
@@ -317,18 +366,24 @@ mod tests {
         );
     }
 
-    /// Ширина страницы — в пунктах, иначе лист в draw.io выходит в
-    /// формате A4, когда схема в пунктах.
+    /// Страница не меньше А4 и в пунктах: иначе draw.io покажет
+    /// обрезанный лист или «A4» из миллиметров.
     #[test]
     fn page_size_is_in_points() {
         let xml = book("t", &[("p".into(), laid("a = 1\n"))], &st());
-        assert!(
-            xml.contains("pageWidth=\"595\""),
-            "нет ширины листа в пунктах"
-        );
-        assert!(
-            xml.contains("pageHeight=\"842\""),
-            "нет высоты листа в пунктах"
-        );
+        let w: f64 = xml
+            .split("pageWidth=\"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .and_then(|s| s.parse().ok())
+            .expect("нет ширины листа");
+        let h: f64 = xml
+            .split("pageHeight=\"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .and_then(|s| s.parse().ok())
+            .expect("нет высоты листа");
+        assert!((w - 595.276).abs() < 0.01, "ширина не А4: {w}");
+        assert!((h - 841.89).abs() < 0.01, "высота не А4: {h}");
     }
 }

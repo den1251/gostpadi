@@ -164,6 +164,34 @@ pub extern "C" fn gostpadi_render_batch(
     font: f64,
     out_len: *mut usize,
 ) -> *mut u8 {
+    render_batch_impl(ptr, len, ru, lw, font, false, out_len)
+}
+
+/// Как `gostpadi_render_batch`, но с управлением разбивкой на листы:
+/// `no_split != 0` — вся схема одним листом (для тех, кто вставляет
+/// схему в отчёт картинкой), иначе — рез по А4, как в CLI.
+#[no_mangle]
+pub extern "C" fn gostpadi_render_batch_ex(
+    ptr: *const u8,
+    len: usize,
+    ru: u8,
+    lw: f64,
+    font: f64,
+    no_split: u8,
+    out_len: *mut usize,
+) -> *mut u8 {
+    render_batch_impl(ptr, len, ru, lw, font, no_split != 0, out_len)
+}
+
+fn render_batch_impl(
+    ptr: *const u8,
+    len: usize,
+    ru: u8,
+    lw: f64,
+    font: f64,
+    no_split: bool,
+    out_len: *mut usize,
+) -> *mut u8 {
     if ptr.is_null() || out_len.is_null() {
         return std::ptr::null_mut();
     }
@@ -180,7 +208,7 @@ pub extern "C" fn gostpadi_render_batch(
         labels: if ru != 0 { "ru" } else { "en" }.into(),
         font: (font > 0.0).then_some(font),
         lw: (lw > 0.0).then_some(lw),
-        no_split: false,
+        no_split,
     };
     let st = opts.style();
     // сбойные входы не останавливают остальные (порт CLI-пачки)
@@ -267,10 +295,13 @@ pub extern "C" fn gostpadi_export_batch(
             return leak(out, out_len);
         }
     };
-    let produced = if mode == 2 {
-        pipeline::render_drawio_batch(schemes, &st)
-    } else {
-        pipeline::render_tight_batch(schemes, &st)
+    let produced: Vec<(String, String)> = match mode {
+        2 => pipeline::render_drawio_batch(schemes, &st),
+        3 => vec![(
+            "schemes.drawio".to_string(),
+            pipeline::render_drawio_book(schemes, &st),
+        )],
+        _ => pipeline::render_tight_batch(schemes, &st),
     };
     let mut out = String::with_capacity(4096);
     out.push_str("{\"ok\":true,\"files\":[");

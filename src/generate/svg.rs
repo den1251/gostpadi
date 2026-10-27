@@ -61,7 +61,7 @@ fn title_geom(l: &Layout, st: &Style, title: &str) -> Option<(f64, f64, f64, f64
 }
 
 /// Габарит документа с подписью: коробка может быть шире схемы.
-fn doc_bounds(l: &Layout, st: &Style) -> (f64, f64, f64, f64) {
+pub(crate) fn doc_bounds(l: &Layout, st: &Style) -> (f64, f64, f64, f64) {
     let Some(title) = l.title.as_deref() else {
         return l.bounds;
     };
