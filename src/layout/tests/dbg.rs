@@ -100,3 +100,127 @@ fn dbg_pages_at_cut() {
         0.22,
     );
 }
+
+#[test]
+#[ignore]
+fn dbg_oaiplab3_1() {
+    let st = Style::default();
+    let src = std::fs::read_to_string("/home/sehaxe/oaiplab3/1.c").unwrap();
+    let schemes = crate::frontend::c::c_to_gvn_functions_full(&src, "ru").unwrap();
+    for (fname, _sig, gvn) in schemes {
+        if fname == "main" {
+            println!("GVN:\n{gvn}");
+        }
+        let nodes = crate::frontend::gvn::parse(&gvn, &st, "ru").unwrap();
+        if fname == "main" {
+            fn dump_stmts(ns: &[crate::ir::Stmt], d: usize) {
+                for s in ns {
+                    match s {
+                        crate::ir::Stmt::Node(n) => {
+                            println!("{}{:?} {:?}", "  ".repeat(d), n.kind, n.text);
+                            for b in &n.branches {
+                                println!("{}br {}:", "  ".repeat(d), b.label);
+                                dump_stmts(&b.stmts, d + 1);
+                            }
+                            if let Some(body) = &n.body {
+                                println!("{}body:", "  ".repeat(d));
+                                dump_stmts(body, d + 1);
+                            }
+                        }
+                        x => println!("{}{:?}", "  ".repeat(d), x),
+                    }
+                }
+            }
+            for n in &nodes {
+                println!("TOP {:?} {:?}", n.kind, n.text);
+                for b in &n.branches {
+                    println!("  br {}:", b.label);
+                    dump_stmts(&b.stmts, 2);
+                }
+                if let Some(body) = &n.body {
+                    println!("  body:");
+                    dump_stmts(body, 2);
+                }
+            }
+        }
+        let sizes = crate::layout::normalize(&nodes, &st);
+        let l = crate::layout::layout(&nodes, &sizes, &st);
+        println!(
+            "== {fname}: shapes={} edges={}",
+            l.shapes.len(),
+            l.edges.len()
+        );
+        for (i, sh) in l.shapes.iter().enumerate() {
+            if sh.cx < 500.0 && (550.0..750.0).contains(&sh.cy) {
+                println!(
+                    "shape {i}: {} ({:.1},{:.1}) {:.1}x{:.1} {:?}",
+                    sh.kind, sh.cx, sh.cy, sh.w, sh.h, sh.lines
+                );
+            }
+        }
+        for (i, lb) in l.labels.iter().enumerate() {
+            println!(
+                "label {i}: {:?} at ({:.1},{:.1}) {}",
+                lb.text, lb.x, lb.y, lb.ha
+            );
+        }
+        for (i, e) in l.edges.iter().enumerate() {
+            if let Err(msg) = crate::layout::crossings_ok(
+                std::slice::from_ref(&l.shapes[0]),
+                std::slice::from_ref(e),
+            ) {
+                let _ = msg;
+            }
+            if e.points
+                .windows(2)
+                .any(|w| (w[0].1 - w[1].1).abs() < 1e-9 && w[0].1 > 560.0 && w[0].1 < 820.0)
+            {
+                println!("edge {i}: {:?} arrow={}", e.points, e.arrow);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn dbg_split_oaiplab3_1() {
+    let st = Style::default();
+    let src = std::fs::read_to_string("/home/sehaxe/oaiplab3/1.c").unwrap();
+    let schemes = crate::frontend::c::c_to_gvn_functions_full(&src, "ru").unwrap();
+    for (fname, _sig, gvn) in schemes {
+        if fname != "main" {
+            continue;
+        }
+        let nodes = crate::frontend::gvn::parse(&gvn, &st, "ru").unwrap();
+        let sizes = crate::layout::normalize(&nodes, &st);
+        let mut stp = st.clone();
+        stp.split_scale = 0.16;
+        let parts = crate::layout::split_scheme(nodes, &sizes, &stp);
+        println!("parts={}", parts.len());
+        for (pi, part) in parts.iter().enumerate() {
+            println!("part {pi}: {} nodes", part.len());
+            for n in part {
+                println!("  {:?} {:?} branches={}", n.kind, n.text, n.branches.len());
+            }
+            let l = crate::layout::layout(part, &sizes, &st);
+            for lb in &l.labels {
+                if lb.text.contains("break") || lb.text.contains("continue") {
+                    println!("    LABEL {:?} ({:.1},{:.1})", lb.text, lb.x, lb.y);
+                }
+            }
+            for sh in &l.shapes {
+                if (550.0..700.0).contains(&sh.cy) {
+                    println!(
+                        "    SHAPE {} ({:.1},{:.1}) {:.1}x{:.1} {:?}",
+                        sh.kind, sh.cx, sh.cy, sh.w, sh.h, sh.lines
+                    );
+                }
+            }
+            for e in &l.edges {
+                if e.points.iter().any(|p| (550.0..700.0).contains(&p.1)) {
+                    println!("    EDGE {:?} arrow={}", e.points, e.arrow);
+                }
+            }
+        }
+    }
+}

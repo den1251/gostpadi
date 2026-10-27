@@ -28,9 +28,11 @@ impl Ctx<'_> {
         if matches!(cascade_cols(nd), Some((k, _)) if k >= 2) {
             return self.decision_cascade(nd, prev, cursor);
         }
-        // большой переключатель: кейсы сеткой, по два на ряд
+        // большой переключатель: кейсы сеткой, по два на ряд. Три кейса
+        // тоже сеткой (2 + 1): веер ставит средний кейс на ось, и его
+        // спуск сливается со стволом в узле с четырьмя сторонами.
         let n_ne = nd.branches.iter().filter(|b| !b.stmts.is_empty()).count();
-        if nd.switch_var.is_some() && n_ne >= 5 {
+        if nd.switch_var.is_some() && (n_ne == 3 || n_ne >= 5) {
             return self.switch_rows(nd, prev, cursor);
         }
         let (dw, dh) = self.sizes["if"];
@@ -144,8 +146,12 @@ impl Ctx<'_> {
         }
         self.case_direct = saved_direct;
         let mut merge_y = y_b;
+        let mut axis_tail: Option<f64> = None;
         for &(bi, side, ..) in &plan {
             let e = exits[bi].unwrap();
+            if side == Side::Axis {
+                axis_tail = Some(axis_tail.map_or(e.1, |v: f64| v.max(e.1)));
+            }
             // Колонка на оси (tx = 0) стоит на стволе продолжения: её низ —
             // живой, мёртвый или «-> конец» — задаёт merge_y, иначе ствол
             // (0, merge_y) → следующий блок протыкает её содержимое.
@@ -286,9 +292,12 @@ impl Ctx<'_> {
                 );
             }
         }
+        // тупиковый кейс на оси не даёт шины, но продолжение не может
+        // начаться внутри его плитки — точка стыка не выше её низа
+        let cont_y = merge_y.max(axis_tail.unwrap_or(f64::MIN));
         let cursor = merge_y.max(col_bottom).max(link_bottom);
         self.anchors.push(Anchor { x: 0.0, y: cursor });
-        (Some((0.0, merge_y)), cursor)
+        (Some((0.0, cont_y)), cursor)
     }
 
     /// Большой переключатель: кейсы сеткой — по два на ряд, ряды друг
@@ -360,6 +369,8 @@ impl Ctx<'_> {
         let mut merge_y = y_bus;
         let mut link_bottom = y_bus;
         let mut merged = false;
+        // последний (нечётный) кейс стоит на оси: его низ — точка продолжения
+        let mut axis_tail: Option<f64> = None;
         for (ri, row) in cases.chunks(2).enumerate() {
             if ri > 0 {
                 // Шина ряда питается от оси switch, а не от слияния прошлого
@@ -371,6 +382,8 @@ impl Ctx<'_> {
             }
             let mut live: Vec<f64> = Vec::new();
             let mut gone: Vec<(f64, f64, bool, Option<char>)> = Vec::new(); // x, yend, to_end, link
+            let mut axis_bottom = y_bus;
+            axis_tail = None;
             for (ci, b) in row.iter().enumerate() {
                 let left = ci == 0 && row.len() > 1;
                 let tx = xs[ri * 2 + ci];
@@ -395,6 +408,10 @@ impl Ctx<'_> {
                 });
                 let (yend, end) = self.render_column(&b.stmts, tx, top);
                 col_bottom = col_bottom.max(yend);
+                if tx.abs() < 1e-9 {
+                    axis_bottom = axis_bottom.max(yend);
+                    axis_tail = Some(yend);
+                }
                 if end != ColEnd::Flow {
                     // тупик return или рельса break: слияния от колонки
                     // нет — break дорисует дренаж switch
@@ -426,12 +443,34 @@ impl Ctx<'_> {
                 self.edge(&[(lo.min(0.0), merge_y), (hi.max(0.0), merge_y)], false);
                 merged = true;
             }
-            // ствол на оси между колонками ряда: связь ромба с шиной
-            // следующего ряда. У нечётного хвоста на оси стоит его
-            // колонка — там ствол не рисуется.
+            // Ствол между рядами: связь ромба с шиной следующего ряда.
+            // У нечётного хвоста на оси стоит его колонка — там ствол не
+            // рисуется. Если шина слияния проходит мимо оси, ствол идёт
+            // на шаг вбок: вертикаль сквозь точку шины давала узел с
+            // четырьмя сторонами, который читается как пересечение.
             if row.len() > 1 {
-                self.edge(&[(0.0, y_bus), (0.0, merge_y)], false);
+                let empty_live = live.is_empty();
+                let (lo, hi) = if empty_live {
+                    (0.0, 0.0)
+                } else {
+                    (
+                        live.iter().cloned().fold(f64::MAX, f64::min),
+                        live.iter().cloned().fold(f64::MIN, f64::max),
+                    )
+                };
+                let off = if hi > self.st.grid {
+                    self.st.grid
+                } else if lo < -self.st.grid {
+                    -self.st.grid
+                } else {
+                    self.st.grid
+                };
+                self.edge(&[(off, y_bus), (off, merge_y)], false);
+                if empty_live {
+                    self.edge(&[(off, merge_y), (0.0, merge_y)], false);
+                }
             }
+
             // «-> конец»: спуск до уровня слияния ряда, наружу за сетку,
             // дальше рельсу дорисует layout() над «концом»
             for &(tx, yend, _, link) in gone.iter().filter(|g| g.2) {
@@ -485,7 +524,7 @@ impl Ctx<'_> {
             }
             merged = true;
         }
-        if !merged {
+        if !merged && axis_tail.is_none() {
             // все живые кейсы в тупиках/«-> конец»: формальное
             // продолжение ствола до точки выхода
             self.edge(&[(0.0, trunk_from), (0.0, merge_y)], false);
@@ -507,9 +546,12 @@ impl Ctx<'_> {
                 false,
             );
         }
+        // тупиковый кейс на оси не даёт шины, но продолжение не может
+        // начаться внутри его плитки — точка стыка не выше её низа
+        let cont_y = merge_y.max(axis_tail.unwrap_or(f64::MIN));
         let cursor = merge_y.max(col_bottom).max(link_bottom);
         self.anchors.push(Anchor { x: 0.0, y: cursor });
-        (Some((0.0, merge_y)), cursor)
+        (Some((0.0, cont_y)), cursor)
     }
 
     /// Каскад else-if: ромбы цепочки на оси друг под другом. У каждого
@@ -659,6 +701,8 @@ impl Ctx<'_> {
             exits.push((tail_x, yend, end, tail.to_end, tail.link, true));
         }
         let col_bottom = exits.iter().map(|e| e.1).fold(y_b_last, f64::max);
+        // в каскаде осевой колонки нет: хвост-«нет» стоит слева
+        let axis_tail: Option<f64> = None;
         let mut merge_y = y_b_last + 2.0 * self.st.grid;
         for &(_, yend, end, to_end, _, _) in &exits {
             if end == ColEnd::Flow && !to_end {
@@ -733,8 +777,11 @@ impl Ctx<'_> {
             // всё мертво: формальный стык к недостижимому продолжению
             self.edge(&[(0.0, y_b_last), (0.0, merge_y)], false);
         }
+        // тупиковый кейс на оси не даёт шины, но продолжение не может
+        // начаться внутри его плитки — точка стыка не выше её низа
+        let cont_y = merge_y.max(axis_tail.unwrap_or(f64::MIN));
         let cursor = merge_y.max(col_bottom).max(link_bottom);
         self.anchors.push(Anchor { x: 0.0, y: cursor });
-        (Some((0.0, merge_y)), cursor)
+        (Some((0.0, cont_y)), cursor)
     }
 }

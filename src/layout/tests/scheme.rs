@@ -835,6 +835,7 @@ fn switch_merge_draws_single_bus() {
         br("1", vec![s("a = 1")], false),
         br("2", vec![s("b = 2")], false),
         br("3", vec![s("c = 3")], false),
+        br("4", vec![s("d = 4")], false),
     ];
     let nodes = vec![
         node(NodeKind::Term, "начало"),
@@ -883,9 +884,141 @@ fn switch_merge_draws_single_bus() {
                 && (e.points.last().unwrap().1 - my).abs() < 1e-9
         })
         .count();
-    assert_eq!(drops, 3, "спуск по каждой колонке отдельно");
+    assert_eq!(drops, 4, "спуск по каждой колонке отдельно");
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(single_entry_ok(&l));
+}
+
+/// РЕГРЕССИЯ: узел с четырьмя сторонами (плюс) на шине switch. Ствол,
+/// проходящий сквозь шину, читается как пересечение двух линий, а не
+/// как ответвление от шины. Ствол между рядами сдвинут на шаг сетки и
+/// заканчивается на шине T-стыком; средний кейс веера (три кейса) ушёл
+/// в сетку 2+1, где осевой колонки нет.
+#[test]
+fn switch_bus_has_no_four_way_nodes() {
+    fn assert_no_four_way(l: &Layout) {
+        const TOL: f64 = 0.01;
+        let segs: Vec<((f64, f64), (f64, f64))> = l
+            .edges
+            .iter()
+            .flat_map(|e| e.points.windows(2).map(|w| (w[0], w[1])))
+            .collect();
+        let mut pts: Vec<(f64, f64)> = segs.iter().flat_map(|&(a, b)| [a, b]).collect();
+        pts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        pts.dedup();
+        for p in pts {
+            let mut dirs = std::collections::BTreeSet::new();
+            for &(a, b) in &segs {
+                let on = if (a.0 - b.0).abs() < 1e-9 {
+                    (p.0 - a.0).abs() <= TOL
+                        && p.1 >= a.1.min(b.1) - TOL
+                        && p.1 <= a.1.max(b.1) + TOL
+                } else {
+                    (p.1 - a.1).abs() <= TOL
+                        && p.0 >= a.0.min(b.0) - TOL
+                        && p.0 <= a.0.max(b.0) + TOL
+                };
+                if !on {
+                    continue;
+                }
+                for q in [a, b] {
+                    let (dx, dy) = (q.0 - p.0, q.1 - p.1);
+                    if dx.abs() <= TOL && dy.abs() <= TOL {
+                        continue;
+                    }
+                    dirs.insert((
+                        if dx.abs() <= TOL {
+                            0
+                        } else if dx > 0.0 {
+                            1
+                        } else {
+                            -1
+                        },
+                        if dy.abs() <= TOL {
+                            0
+                        } else if dy > 0.0 {
+                            1
+                        } else {
+                            -1
+                        },
+                    ));
+                }
+            }
+            assert!(
+                dirs.len() < 4,
+                "узел с четырьмя сторонами в {p:?}: {dirs:?}"
+            );
+        }
+    }
+    let st = Style::default();
+    // вложенный switch из трёх кейсов (2+1) и верхний из пяти (2+2+1)
+    let nested = "\
+while a < 5
+    switch (a)
+        1:
+        b = 1
+        2:
+        b = 2
+        3:
+        b = 3
+    a = a + 1
+";
+    let top5 = "\
+switch (a)
+    1:
+    b = 1
+    2:
+    b = 2
+    3:
+    b = 3
+    4:
+    b = 4
+    5:
+    b = 5
+";
+    let top3 = "\
+switch (a)
+    1:
+    b = 1
+    2:
+    b = 2
+    3:
+    b = 3
+";
+    // ряд целиком мёртв (оба кейса — continue): шины слияния у ряда нет,
+    // ствол между рядами не должен проходить сквозь шину входа
+    let dead_row = "\
+while a < 5
+    switch (a)
+        1:
+        continue
+        2:
+        continue
+        3:
+        b = 3
+    a = a + 1
+";
+    let dead_row_top = "\
+switch (a)
+    1:
+    return 1
+    2:
+    return 2
+    3:
+    b = 3
+    4:
+    b = 4
+    5:
+    b = 5
+";
+    for text in [nested, top5, top3, dead_row, dead_row_top] {
+        let nodes = crate::frontend::gvn::parse(text, &st, "ru").unwrap();
+        let sizes = normalize(&nodes, &st);
+        let l = layout(&nodes, &sizes, &st);
+        assert_no_four_way(&l);
+        assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+        assert!(dangling_ok(&l).is_ok());
+    }
 }
 
 /// Короткая ветка НЕ получает пад: контент всех колонок начинается на
@@ -1183,6 +1316,54 @@ fn diamond_has_no_vertical_down_leg() {
             }
         }
         assert!(n_if >= 1);
+    }
+}
+
+/// РЕГРЕССИЯ (readsize.c): ромб, все ветви которого уходят рельсами
+/// break/continue, не тянет ствол из нижней вершины. Продолжения на оси
+/// нет, и вертикаль обрывалась в пустоте между маркерами соседних
+/// колонок (внутренний if внутри while).
+#[test]
+fn diamond_with_all_rails_has_no_dangling_leg() {
+    let st = Style::default();
+    let text = "\
+while 1
+    printf(\"privet...\")
+    if scanf_s(...) == 2
+        да:
+        if *x > SIZEX || *y > SIZEY || *x <= 0 || *y <= 0
+            да:
+            printf(\"max size is...\")
+            continue
+            нет:
+            printf(\"Razmer...\")
+            break
+        нет:
+        printf(\"prover format\")
+        while getchar() != '\\n'
+";
+    let nodes = crate::frontend::gvn::parse(text, &st, "ru").unwrap();
+    let sizes = normalize(&nodes, &st);
+    let l = layout(&nodes, &sizes, &st);
+    if let Err(e) = dangling_ok(&l) {
+        panic!("обрыв линии: {e}");
+    }
+    for d in l.shapes.iter().filter(|s| s.kind == "if") {
+        let bottom = d.cy + d.h / 2.0;
+        for e in &l.edges {
+            for w in e.points.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let vertical_out = (a.0 - d.cx).abs() < 1e-9
+                    && (b.0 - d.cx).abs() < 1e-9
+                    && (((a.1 - bottom).abs() < 1e-9 && b.1 > bottom + 1e-9)
+                        || ((b.1 - bottom).abs() < 1e-9 && a.1 > bottom + 1e-9));
+                assert!(
+                    !vertical_out,
+                    "вертикаль из нижней вершины ромба {:?}: {a:?}-{b:?}",
+                    d.lines
+                );
+            }
+        }
     }
 }
 
