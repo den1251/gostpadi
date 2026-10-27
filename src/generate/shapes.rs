@@ -4,7 +4,7 @@ use super::svg::put;
 use crate::layout::Shape;
 
 /// tan(75°): наклон боковых сторон параллелограмма «ввод-вывод».
-const TAN75: f64 = 3.732_050_807_568_877_6;
+pub(crate) const TAN75: f64 = 3.732_050_807_568_877_6;
 
 fn poly(out: &mut String, pts: &[(f64, f64)]) {
     out.push_str("<polygon points=\"");
