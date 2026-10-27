@@ -11,7 +11,7 @@ use crate::layout::{measure, Edge, Layout};
 use crate::style::Style;
 
 /// ГОСТ: длина усика 0.2..0.25 высоты модуля (a = 2*grid); берём верх диапазона.
-const WHISKER_FRAC: f64 = 0.25;
+pub(crate) const WHISKER_FRAC: f64 = 0.25;
 
 /// Зазор между подписью-коробкой и верхом «начала», в долях сетки:
 /// в нём помещается стрелка от функции к схеме.
@@ -54,7 +54,7 @@ pub fn fit_scale(l: &Layout, st: &Style) -> f64 {
 }
 
 /// (cx, y0, w, h, верх «начала») коробки подписи; None — подписи нет.
-fn title_geom(l: &Layout, st: &Style, title: &str) -> Option<(f64, f64, f64, f64, f64)> {
+pub(crate) fn title_geom(l: &Layout, st: &Style, title: &str) -> Option<(f64, f64, f64, f64, f64)> {
     // верхний блок схемы — терминатор «начало»; подпись встаёт над ним
     let start = l
         .shapes

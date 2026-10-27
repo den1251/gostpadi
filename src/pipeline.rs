@@ -190,14 +190,14 @@ fn book_title(stem: &str, pages: &[Layout]) -> String {
 }
 
 pub fn render_drawio_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, String)> {
-    let (laid, _) = paginate(&schemes, st);
+    let (laid, scale) = paginate(&schemes, st);
     laid.into_iter()
         .map(|(path, pages)| {
             let name = book_title(&stem_of(&path), &pages);
             // имена страниц даёт book(): лист 1..N добавляется сам
             let named: Vec<(String, Layout)> =
                 pages.into_iter().map(|l| (String::new(), l)).collect();
-            (path, crate::drawio::book(&name, &named, st))
+            (path, crate::drawio::book(&name, &named, st, scale))
         })
         .collect()
 }
@@ -205,12 +205,12 @@ pub fn render_drawio_batch(schemes: Vec<Scheme>, st: &Style) -> Vec<(String, Str
 /// Вся пачка — в одну книгу draw.io: каждая схема и каждый её лист
 /// отдельной страницей. Один файл на всю лабу вместо папки обрывков.
 pub fn render_drawio_book(schemes: Vec<Scheme>, st: &Style) -> String {
-    let (laid, _) = paginate(&schemes, st);
+    let (laid, scale) = paginate(&schemes, st);
     let sections: Vec<(String, Vec<Layout>)> = laid
         .into_iter()
         .map(|(path, pages)| (book_title(&stem_of(&path), &pages), pages))
         .collect();
-    crate::drawio::book_all(&sections, st)
+    crate::drawio::book_all(&sections, st, scale)
 }
 
 /// Склеивает части порезки в одну раскладку: вертикальные смещения
