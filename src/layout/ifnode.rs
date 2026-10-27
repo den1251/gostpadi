@@ -398,6 +398,15 @@ impl Ctx<'_> {
             .filter(|b| b.stmts.is_empty())
             .map(|b| b.label.clone())
             .collect();
+        // пустая ветка — короткое колено в свою сторону (0 — «да», 1 —
+        // «нет»), а не ствол из нижней вершины ромба
+        let empty_idx: Vec<(usize, String)> = nd
+            .branches
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.stmts.is_empty())
+            .map(|(i, b)| (i, b.label.clone()))
+            .collect();
         let n = idxs.len();
         let ext: Vec<(f64, f64)> = idxs
             .iter()
@@ -484,19 +493,43 @@ impl Ctx<'_> {
                 merge2 = merge2.max(y + self.st.mgap);
             }
         }
-        // Пустая ветка простого if — сквозной проход: «нет» идёт по стволу
-        // вниз и колонку не занимает (канон методички). Пустой кейс
-        // switch — своя ветвь, он уходит рельсой справа.
-        let trunk: Vec<String> = if is_switch { Vec::new() } else { empty.clone() };
+        // Пустая ветка простого if — короткое колено в свою сторону, а не
+        // ствол из нижней вершины ромба. Пустой кейс switch — своя ветвь,
+        // он уходит рельсой справа.
+        let stub: Vec<(usize, String)> = if is_switch {
+            Vec::new()
+        } else {
+            empty_idx.clone()
+        };
+        let stubs: Vec<(f64, f64, String)> = stub
+            .iter()
+            .map(|(i, lbl)| {
+                let sgn = if *i == 0 { 1.0 } else { -1.0 };
+                (tx + sgn * (dw / 2.0 + self.st.hgap), sgn, lbl.clone())
+            })
+            .collect();
         let rails: Vec<String> = if is_switch { empty.clone() } else { Vec::new() };
-        if !trunk.is_empty() {
+        if !stubs.is_empty() {
             merge2 = merge2.max(y_b + 2.0 * self.st.grid);
         }
-        let cols: Vec<(f64, f64)> = bottoms
+        let mut cols: Vec<(f64, f64)> = bottoms
             .iter()
             .filter(|&&(_, _, end)| end == ColEnd::Flow)
             .map(|&(bi, y, _)| (plan.iter().find(|p| p.0 == bi).unwrap().3, y))
             .collect();
+        for (sx, sgn, lbl) in &stubs {
+            self.edge(
+                &[(tx + *sgn * dw / 2.0, cy), (*sx, cy), (*sx, merge2)],
+                false,
+            );
+            self.labels.push(Label {
+                x: tx + *sgn * (dw / 2.0 + self.st.grid),
+                y: cy - self.st.label_dy,
+                text: lbl.clone(),
+                ha: "center".into(),
+            });
+            cols.push((*sx, merge2));
+        }
         self.merge_bus(&cols, tx, merge2);
         // рельсы break из веток внутри кейсов (if внутри case): наружу
         // за колонки switch, вниз к слиянию switch, T-стык на стволе
@@ -514,18 +547,6 @@ impl Ctx<'_> {
                             self.st.grid,
                         );
                 self.edge(&[(b.tx, b.y), (rx, b.y), (rx, merge2), (tx, merge2)], false);
-            }
-        }
-        if !trunk.is_empty() {
-            // ствол сквозного прохода: от нижней вершины до шины слияния
-            self.edge(&[(tx, y_b), (tx, merge2)], false);
-            for (k, lbl) in trunk.iter().enumerate() {
-                self.labels.push(Label {
-                    x: tx + self.st.label_axis_dx,
-                    y: y_b + (2.0 + k as f64) * self.st.grid,
-                    text: lbl.clone(),
-                    ha: "left".into(),
-                });
             }
         }
         if !rails.is_empty() {

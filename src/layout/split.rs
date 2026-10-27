@@ -136,7 +136,17 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
         // короткий остаток делим, только если делить есть что — маркер или
         // уже разрезанный цикл. Иначе выходит лишний пустоватый лист:
         // схема из четырёх узлов и так уезжает на один лист целиком
-        let divisible = items.len() >= 3 || marker.is_some() || items.iter().any(is_piece);
+        let empty_branch_decision = items.iter().any(|nd| {
+            nd.kind == NodeKind::Decision
+                && nd.switch_var.is_none()
+                && nd.branches.iter().any(|b| {
+                    !b.stmts.is_empty() && !b.to_end && b.link.is_none() && b.stmts.len() >= 2
+                })
+        });
+        let divisible = items.len() >= 3
+            || marker.is_some()
+            || items.iter().any(is_piece)
+            || empty_branch_decision;
         if !fits && !divisible {
             parts.push(items);
             break;
@@ -167,6 +177,19 @@ pub fn split_scheme(mut items: Vec<Node>, sizes: &Sizes, st: &Style) -> Vec<Vec<
             auto_cut(&res, &items, target, cap, stop, 2).or(marker)
         };
         let Some(cut) = cut else {
+            // верхний уровень резать нечем, а переросток — длинная ветка
+            // ромба: режем внутри неё (кружки A/OUT), иначе лист атомарен.
+            // Опорный проход (split_scale 1.0) не трогаем: он меряет
+            // натуральный масштаб схемы, и дробление ветки там занижает
+            // бюджет следующего прохода.
+            if !fits
+                && st.split_scale < 0.999
+                && split_decision_branch(
+                    &mut items, sizes, st, budget, &mut parts, &letter, &mut li,
+                )
+            {
+                continue;
+            }
             // верхний уровень резать нечем — лист доливается целиком
             parts.push(items);
             break;
@@ -266,6 +289,18 @@ fn strip_stmts(stmts: &mut Vec<Stmt>) {
         if let Stmt::Node(nd) = s {
             strip_children(nd);
         }
+    }
+}
+
+/// Stmt ветки -> узел верхнего уровня (хвост разрезанной ветки едет на
+/// следующий лист как обычный поток). Рельсы сюда не попадают: ветку с
+/// ними не режем.
+fn stmt_node(s: Stmt) -> Option<Node> {
+    match s {
+        Stmt::Tile { kind, text } => Some(Node::new(NodeKind::from(kind), text)),
+        Stmt::Return(t) => Some(Node::new(NodeKind::Return, t)),
+        Stmt::Node(nd) => Some(*nd),
+        Stmt::Break | Stmt::Continue => None,
     }
 }
 
@@ -406,6 +441,86 @@ fn split_loop_body(
     false
 }
 
+/// Рез внутри длинной ветки ромба: верх ветки остаётся на листе и
+/// кончается кружком A, а под ромбом ставится кружок OUT (продолжение
+/// после if). Следующий лист: A -> остаток ветки -> OUT -> дальнейший
+/// поток. Так крупный атомарный ромб (`if (!eof) { ... }`) перестаёт
+/// растягивать весь лист.
+///
+/// Пустая ветка-заглушка и остальные ветки сливаются на шине ромба и
+/// входят в OUT; остаток разрезанной ветки входит в тот же OUT снизу —
+/// одинаковые буквы и есть точка слияния (как link «-> конец»).
+fn split_decision_branch(
+    items: &mut Vec<Node>,
+    sizes: &Sizes,
+    st: &Style,
+    budget: f64,
+    parts: &mut Vec<Vec<Node>>,
+    letter: &impl Fn(usize) -> char,
+    li: &mut usize,
+) -> bool {
+    for j in 0..items.len() {
+        if items[j].kind != NodeKind::Decision || items[j].switch_var.is_some() {
+            continue;
+        }
+        for bi in 0..items[j].branches.len() {
+            let br = &items[j].branches[bi];
+            // ветка уже уходит на другой лист/в «конец» либо мертва:
+            // выносить из неё хвост некуда
+            if br.to_end || br.link.is_some() || br.stmts.len() < 2 {
+                continue;
+            }
+            if br.stmts.iter().any(|s| {
+                matches!(s, Stmt::Return(_) | Stmt::Break | Stmt::Continue)
+                    || matches!(s, Stmt::Node(nd) if nd.kind == NodeKind::Conn && nd.text == MARKER)
+            }) {
+                continue;
+            }
+            let mut cut = None;
+            for m in (1..br.stmts.len()).rev() {
+                let mut d = items[j].clone();
+                let mut head = d.branches[bi].stmts[..m].to_vec();
+                // буква влияет только на подпись кружка, ширина общая
+                head.push(Stmt::Node(Box::new(Node::new(NodeKind::Conn, "А"))));
+                d.branches[bi].stmts = head;
+                let mut trial: Vec<Node> = items[..j].to_vec();
+                trial.push(d);
+                trial.push(Node::new(NodeKind::Conn, "Б"));
+                if layout(&trial, sizes, st).bounds.3 <= budget {
+                    cut = Some(m);
+                    break;
+                }
+            }
+            let Some(m) = cut else { continue };
+            let a = letter(*li);
+            *li += 1;
+            let out = letter(*li);
+            *li += 1;
+            let tail: Vec<Node> = items[j].branches[bi].stmts[m..]
+                .iter()
+                .cloned()
+                .filter_map(stmt_node)
+                .collect();
+            let mut head_page: Vec<Node> = items[..=j].to_vec();
+            let mut hb = head_page[j].branches[bi].stmts[..m].to_vec();
+            hb.push(Stmt::Node(Box::new(Node::new(
+                NodeKind::Conn,
+                a.to_string(),
+            ))));
+            head_page[j].branches[bi].stmts = hb;
+            head_page.push(Node::new(NodeKind::Conn, out.to_string()));
+            parts.push(head_page);
+            let mut rest = vec![Node::new(NodeKind::Conn, a.to_string())];
+            rest.extend(tail);
+            rest.push(Node::new(NodeKind::Conn, out.to_string()));
+            rest.extend(items[j + 1..].iter().cloned());
+            *items = rest;
+            return true;
+        }
+    }
+    false
+}
+
 /// Ветки «-> конец» в не-последних частях кончаются кружком: сам «конец»
 /// живёт на последнем листе, туда же ставятся его кружки.
 fn link_branches_to_end(parts: &mut [Vec<Node>], letter: &impl Fn(usize) -> char, li: &mut usize) {
@@ -455,6 +570,50 @@ mod tests {
         let parts = split_scheme(nodes, &sizes, &st);
         assert!(!parts.is_empty());
         assert!(parts.iter().all(|p| !p.is_empty()));
+    }
+
+    /// Длинная ветка ромба — атомарный переросток: верхний уровень
+    /// резать нечего (ромб один), рез идёт внутри ветки кружками A/OUT.
+    /// Каждый лист влезает в бюджет А4 и остаётся валидной схемой.
+    #[test]
+    fn long_decision_branch_splits_across_pages() {
+        let st = Style::default();
+        let mut text = String::from("if c > 0\n    да:\n");
+        for i in 1..=70 {
+            text.push_str(&format!("    a = {i}\n"));
+        }
+        let nodes = gvn::parse(&text, &st, "en").unwrap();
+        let sizes = normalize(&nodes, &st);
+        let cut_st = Style {
+            split_scale: st.split_min,
+            ..st.clone()
+        };
+        let parts = split_scheme(nodes, &sizes, &cut_st);
+        assert!(parts.len() >= 2, "ветка не разрезана: {}", parts.len());
+        let budget = (st.a4_h - 2.0 * st.page_pad) / st.split_min;
+        for (i, p) in parts.iter().enumerate() {
+            let l = layout(p, &sizes, &st);
+            assert!(
+                l.bounds.3 <= budget,
+                "лист {i}: {:.0} > бюджета {budget:.0}",
+                l.bounds.3
+            );
+            if let Err(e) = crate::layout::crossings_ok(&l.shapes, &l.edges) {
+                panic!("лист {i}: {e}");
+            }
+            if let Err(e) = crate::layout::dangling_ok(&l) {
+                panic!("лист {i}: {e}");
+            }
+            assert!(crate::layout::single_entry_ok(&l), "лист {i}");
+        }
+        // продолжение начинается с кружка A, а не с середины ветки
+        assert!(
+            parts
+                .iter()
+                .skip(1)
+                .any(|p| p.first().is_some_and(|n| n.kind == NodeKind::Conn)),
+            "нет листа-продолжения с кружком"
+        );
     }
 
     /// Голова и хвост одного цикла на одном листе — снова целый цикл.

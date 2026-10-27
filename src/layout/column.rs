@@ -1,6 +1,7 @@
 use super::ctx::{BreakAt, ColEnd, Ctx};
 use super::measure::kind_name;
 use super::types::Sizes;
+use crate::frontend::MARKER;
 use crate::ir::{Branch, NodeKind, Stmt, TileKind};
 use crate::style::Style;
 
@@ -40,6 +41,15 @@ pub(super) fn extent_lr(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) ->
                 let e = sizes["ret"].0 / 2.0;
                 hl = hl.max(e);
                 hr = hr.max(e);
+            }
+            Stmt::Node(nd) if nd.kind == NodeKind::Conn => {
+                // кружок-соединитель в конце ветки (рез листа): точка
+                // ухода, поток ветки здесь заканчивается
+                if nd.text != MARKER {
+                    let e = sizes["conn"].0 / 2.0;
+                    hl = hl.max(e);
+                    hr = hr.max(e);
+                }
             }
             Stmt::Node(nd) if nd.kind == NodeKind::Decision => {
                 let ne: Vec<&Branch> = nd.branches.iter().filter(|b| !b.stmts.is_empty()).collect();
@@ -144,7 +154,17 @@ impl Ctx<'_> {
             match it {
                 // маркер ручного переноса внутри ветки: страниц внутри
                 // колонки нет, узел глотается молча (раньше падал в sub_loop)
-                Stmt::Node(nd) if nd.kind == NodeKind::Conn => {}
+                Stmt::Node(nd) if nd.kind == NodeKind::Conn && nd.text == MARKER => {}
+                // кружок-соединитель в конце ветки: поток ветки уходит на
+                // другой лист, слияние ромба сюда не тянется
+                Stmt::Node(nd) if nd.kind == NodeKind::Conn => {
+                    let (_, h_c) = self.sizes["conn"];
+                    if let Some(pb) = prev_bottom {
+                        self.edge(&[(tx, pb), (tx, top)], true);
+                    }
+                    self.add("conn", tx, top + h_c / 2.0, &nd.text);
+                    return (top + h_c, ColEnd::Rail);
+                }
                 Stmt::Node(nd) => {
                     if let Some(pb) = prev_bottom {
                         self.edge(&[(tx, pb), (tx, top)], true);
