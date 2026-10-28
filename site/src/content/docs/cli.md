@@ -15,6 +15,7 @@ cargo build --release
 
 ```bash
 gostpadi main.c -o main.svg            # код C -> main.svg
+gostpadi main.cpp -o main.svg          # код C++ -> main.svg
 gostpadi 1/*.c 2/*.c -o out/           # пачка: каждой схеме свой .svg
 gostpadi main.c --labels=ru            # надписи «начало/конец», «да/нет»
 gostpadi main.c --trim -o main.svg     # лист по содержимому, в миллиметрах
@@ -23,6 +24,8 @@ gostpadi main.c --check                # только проверка, без �
 ```
 
 Результат — чистый векторный SVG: в Word, LaTeX и браузере без потерь.
+Кодом считаются расширения `.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`,
+`.hxx`, `.hh`; остальные файлы разбираются как текст схемы `.gvn`.
 
 ## Опции
 
