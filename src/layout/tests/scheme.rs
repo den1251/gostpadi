@@ -2780,11 +2780,12 @@ fn break_and_continue_leave_at_different_heights() {
     assert!(dangling_ok(&l).is_ok());
 }
 
-/// if/else с continue и break: общая рельса стоит МЕЖДУ ветками, а не
-/// у дальнего края тела. Иначе обе горизонтали уходят за край схемы и
-/// читаются как две стрелки «вправо» из одного ромба.
+/// if/else с continue и break: continue возвращается к голове цикла
+/// (вверх по своей стороне), break спускается вниз своей колонкой и
+/// уходит под трапецию. Ветви не сливаются в одну вертикаль и не
+/// расходятся из неё «одна линия, потом две».
 #[test]
-fn shared_rail_sits_between_branches() {
+fn continue_returns_to_head_break_goes_down() {
     let mut inner = node(NodeKind::Decision, "if a");
     inner.branches = vec![
         br("да", vec![s("printf(\"max\")"), Stmt::Continue], false),
@@ -2801,47 +2802,56 @@ fn shared_rail_sits_between_branches() {
         node(NodeKind::Term, "конец"),
     ];
     let l = lay(&nodes);
-    let tiles: Vec<&_> = l
+    let lb = l
         .shapes
         .iter()
-        .filter(|sh| sh.kind == "exit")
-        .collect();
-    assert_eq!(tiles.len(), 2, "continue и break — две плитки");
-    let mut lanes = Vec::new();
-    for t in &tiles {
-        let bottom = t.cy + t.h / 2.0;
-        // горизонталь рельсы: на полшага ниже плитки, тянется от её
-        // колонки к общему коридору
-        let e = l
-            .edges
-            .iter()
-            .find(|e| {
-                !e.arrow
-                    && e.points.len() == 2
-                    && (e.points[0].1 - e.points[1].1).abs() < 1e-9
-                    && e.points[0].1 > bottom - 1.0
-                    && e.points[0].1 < bottom + 40.0
-                    && (e.points[0].0 - e.points[1].0).abs() > 1.0
-                    && e.points[0].0.min(e.points[1].0) - 1.0 <= t.cx
-                    && t.cx <= e.points[0].0.max(e.points[1].0) + 1.0
-            })
-            .unwrap_or_else(|| panic!("рельса из плитки {:?}", t.lines));
-        let (a, b) = (e.points[0].0, e.points[1].0);
-        lanes.push(if (a - t.cx).abs() > (b - t.cx).abs() { a } else { b });
-    }
+        .find(|sh| sh.kind == "loop_begin")
+        .expect("голова цикла");
+    let le = l
+        .shapes
+        .iter()
+        .find(|sh| sh.kind == "loop_end")
+        .expect("низ цикла");
+    let cont_edge = l
+        .edges
+        .iter()
+        .find(|e| {
+            e.arrow
+                && e.points.last().is_some_and(|p| {
+                    (p.1 - lb.cy).abs() < 1e-6
+                        && ((p.0 - (lb.cx - lb.w / 2.0)).abs() < 1e-6
+                            || (p.0 - (lb.cx + lb.w / 2.0)).abs() < 1e-6)
+                })
+        })
+        .expect("continue входит в бок loop_begin");
+    // вертикаль continue — по своей стороне, далеко от колонки break
+    let cont_lane = cont_edge.points[0].0;
+    let brk_edge = l
+        .edges
+        .iter()
+        .find(|e| {
+            !e.arrow
+                && e.points.windows(2).any(|w| {
+                    (w[0].0 - w[1].0).abs() < 1e-9
+                        && w[0].1 < w[1].1
+                        && w[1].1 > le.cy + le.h / 2.0
+                })
+        })
+        .expect("break спускается ниже loop_end");
+    let brk_x = brk_edge.points[0].0;
     assert!(
-        (lanes[0] - lanes[1]).abs() < 1e-6,
-        "continue и break делят один коридор: {:?}",
-        lanes
+        (cont_lane - brk_x).abs() > 1.0,
+        "continue и break делят одну вертикаль: {} и {}",
+        cont_lane,
+        brk_x
     );
-    let (a, b) = (tiles[0].cx.min(tiles[1].cx), tiles[0].cx.max(tiles[1].cx));
     assert!(
-        lanes[0] > a + 1.0 && lanes[0] < b - 1.0,
-        "рельса {} между ветками {}..{}",
-        lanes[0],
-        a,
-        b
+        cont_edge.points.last().unwrap().1 < le.cy,
+        "continue выше низа цикла"
     );
+    assert!(collinear_overlap_ok(&l).is_ok());
+    assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
+    assert!(dangling_ok(&l).is_ok());
 }
 
 

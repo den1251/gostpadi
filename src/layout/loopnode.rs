@@ -189,7 +189,16 @@ impl Ctx<'_> {
             // выше его низа. Разные высоты, разные горизонтали.
             let yj = (cy2 + lh / 2.0 + merge) * 0.5;
             self.rails_to_end(
-                &breaks, &conts, tx, lw, cy2, yj, body_left, body_right, &blocked,
+                &breaks,
+                &conts,
+                tx,
+                lw,
+                if begins { Some(cy1) } else { None },
+                cy2,
+                yj,
+                body_left,
+                body_right,
+                &blocked,
             );
             // Обратная стрелка не рисуется: начало и конец тела
             // связывают одинаковые номера на трапециях (как в
@@ -335,6 +344,7 @@ impl Ctx<'_> {
         conts: &[BreakAt],
         tx: f64,
         lw: f64,
+        head_y: Option<f64>,
         cy2: f64,
         yj: f64,
         left: f64,
@@ -366,26 +376,40 @@ impl Ctx<'_> {
                     continue;
                 }
             }
-            // Один break + один continue: общая рельса посередине между
-            // ними, а не у дальнего края тела. Иначе обе горизонтали
-            // выходят из-за края схемы и читаются как стрелки «из ромба
-            // вправо»; середина между ветками — это ось ромба.
-            let mid = if bs.len() == 1 && cs.len() == 1 {
-                let x = (bs[0].tx + cs[0].tx) * 0.5;
-                let top = self.rail(bs[0], false).by.min(self.rail(cs[0], true).by);
-                let bottom = yj.max(cont_y);
-                if !blocked(x, top, bottom) {
-                    Some(x)
-                } else {
-                    None
+            // Один break + один continue из плиток: общий коридор сливал
+            // их в одну вертикаль, и на выходе она раздваивалась —
+            // читается как «одна линия, потом две». Каноническое чтение:
+            // continue возвращается к голове цикла (вверх по своей
+            // стороне), break спускается вниз по своей колонке и уходит
+            // под трапецию. Ветви не пересекаются и не сливаются.
+            if let (Some(hy), true) = (head_y, bs.len() == 1 && cs.len() == 1) {
+                let c = cs[0];
+                let b = bs[0];
+                let outside =
+                    b.tx < tx - lw / 2.0 - 1.0 || b.tx > tx + lw / 2.0 + 1.0;
+                if c.from_tile && b.from_tile && outside {
+                    let lane = self.lane(right_side, left, right);
+                    let by = c.y + self.st.grid * 0.5;
+                    self.edge(&[(c.tx, c.y), (c.tx, by)], false);
+                    self.edge(&[(c.tx, by), (lane, by)], false);
+                    self.edge(&[(lane, by), (lane, hy)], false);
+                    let hx = if right_side {
+                        tx + lw / 2.0
+                    } else {
+                        tx - lw / 2.0
+                    };
+                    self.edge(&[(lane, hy), (hx, hy)], true);
+                    if !c.marked {
+                        self.rail_label(lane, right_side, hy, "continue");
+                    }
+                    self.edge(&[(b.tx, b.y), (b.tx, yj), (tx, yj)], false);
+                    if !b.marked {
+                        self.rail_label(b.tx, right_side, yj, "break");
+                    }
+                    continue;
                 }
-            } else {
-                None
-            };
-            let lane = match mid {
-                Some(x) => x,
-                None => self.lane(right_side, left, right),
-            };
+            }
+            let lane = self.lane(right_side, left, right);
             let bottom = if bs.is_empty() { cont_y } else { yj };
             let items: Vec<Rail> = bs
                 .iter()
