@@ -496,9 +496,8 @@
     #pager button, #lbpager button { width: 40px; height: 40px; }
     .dx-x { width: 40px; height: 40px; }
     #plist li { min-height: 40px; display: flex; align-items: center; }
-    /* главное действие схемы — во всю ширину своей строки */
-    #viewbar > .tools:last-child { flex: 1 1 100%; }
-    #viewbar > .tools:last-child #dx-open { flex: 1; }
+    /* тулбар схемы — одна строка: «Скачать» не растягиваем в полосу */
+    #viewbar > .tools:last-child { flex: 0 0 auto; }
   }
   @media (prefers-reduced-motion: reduce) {
     .dx-pan, .dx-done, .done-steps li { animation: none; opacity: 1; }
@@ -766,7 +765,6 @@
         <span id="zoomval">100%</span>
         <button id="zoomin" class="btn" title="увеличить" aria-label="увеличить">+</button>
         <button id="zoomfit" class="btn" title="вписать в панель">вписать</button>
-        <button id="zoomfull" class="btn" title="на весь экран">⤢</button>
       </span>
       <span class="tools">
         <span class="menu-wrap">
@@ -989,7 +987,7 @@ let activeSheet = 0;
 let freshDraw = false, lastSheetSig = "";
 let zoom = null;         // null = вписать
 let pan = { x: 0, y: 0 };
-let renderTimer = null, pendingUndo = null, undoTimer = null;
+let renderTimer = null, pendingUndo = null, undoTimer = null, collageTimer = null, collageW = 0;
 let lastBatch = false;
 
 const store = {
@@ -1013,7 +1011,18 @@ $("theme").addEventListener("click", () => {
   applyTheme(THEME_CYCLE[document.documentElement.dataset.theme] || "auto");
 });
 applyTheme(store.get("gostpadi.theme") || "auto");
-addEventListener("resize", () => { if (zoom === null) applyZoom(); });
+addEventListener("resize", () => {
+  if (zoom === null) applyZoom();
+  // коллаж считает плитки от ширины панели: при повороте телефона
+  // или сужении окна лист оставался прежним и уезжал за край
+  const st = $("stage");
+  if (st.classList.contains("collage")) {
+    clearTimeout(collageTimer);
+    collageTimer = setTimeout(() => {
+      if (st.classList.contains("collage") && ownSheets().length && st.clientWidth !== collageW) drawSheets();
+    }, 120);
+  }
+});
 
 /* ============================== статус и тосты ============================== */
 
@@ -1340,6 +1349,7 @@ function drawCollage(stage) {
     setTimeout(() => stage.classList.remove("fresh"), 200);
     freshDraw = false;
   }
+  collageW = stage.clientWidth;
   const vh = stage.clientHeight - 60 || 320;
   // коллаж читается коллажем, когда плиток несколько. Одна схема —
   // не повод показывать её маркой в углу: даём ей место панели.
@@ -1753,10 +1763,6 @@ function setZoom(z) {
 $("zoomin").addEventListener("click", () => setZoom(curZoom() * 1.25));
 $("zoomout").addEventListener("click", () => setZoom(curZoom() / 1.25));
 $("zoomfit").addEventListener("click", () => setZoom(null));
-$("zoomfull").addEventListener("click", () => {
-  const v = $("viewport");
-  (document.fullscreenElement ? document.exitFullscreen() : v.requestFullscreen())?.catch?.(() => {});
-});
 
 function curZoom() {
   return zoom ?? fitZoom() ?? 1;
@@ -2843,7 +2849,13 @@ function switchTab(name) {
   }
   // панель только что показана: размеры доступны после следующего кадра.
   // Без этого масштаб считался по скрытой панели и ломался.
-  requestAnimationFrame(() => { if (zoom === null) applyZoom(); });
+  requestAnimationFrame(() => {
+    if (zoom === null) applyZoom();
+    // коллаж пересчитывается от ширины панели: пока вкладка была
+    // скрыта, ширина нулевая, и лист выходил в 180 px
+    const st = $("stage");
+    if (st.classList.contains("collage") && ownSheets().length && st.clientWidth !== collageW) drawSheets();
+  });
 }
 
 /* десктоп: какие панели показаны; схема видна всегда */
