@@ -1309,16 +1309,12 @@ fn diamond_has_no_vertical_down_leg() {
                 }
                 // подписи вложенных ромбов лежат на той же строке: берём
                 // ближайший по x ромб, иначе внешний судит чужую подпись
-                let nearest = l
-                    .shapes
-                    .iter()
-                    .filter(|s| s.kind == "if")
-                    .min_by(|a, b| {
-                        (a.cx - lb.x)
-                            .abs()
-                            .partial_cmp(&(b.cx - lb.x).abs())
-                            .unwrap()
-                    });
+                let nearest = l.shapes.iter().filter(|s| s.kind == "if").min_by(|a, b| {
+                    (a.cx - lb.x)
+                        .abs()
+                        .partial_cmp(&(b.cx - lb.x).abs())
+                        .unwrap()
+                });
                 if nearest.map(|s| s.cx) != Some(d.cx) {
                     continue;
                 }
@@ -2832,9 +2828,7 @@ fn continue_returns_to_head_break_goes_down() {
         .find(|e| {
             !e.arrow
                 && e.points.windows(2).any(|w| {
-                    (w[0].0 - w[1].0).abs() < 1e-9
-                        && w[0].1 < w[1].1
-                        && w[1].1 > le.cy + le.h / 2.0
+                    (w[0].0 - w[1].0).abs() < 1e-9 && w[0].1 < w[1].1 && w[1].1 > le.cy + le.h / 2.0
                 })
         })
         .expect("break спускается ниже loop_end");
@@ -2853,5 +2847,3 @@ fn continue_returns_to_head_break_goes_down() {
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(dangling_ok(&l).is_ok());
 }
-
-

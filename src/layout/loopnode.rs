@@ -385,8 +385,7 @@ impl Ctx<'_> {
             if let (Some(hy), true) = (head_y, bs.len() == 1 && cs.len() == 1) {
                 let c = cs[0];
                 let b = bs[0];
-                let outside =
-                    b.tx < tx - lw / 2.0 - 1.0 || b.tx > tx + lw / 2.0 + 1.0;
+                let outside = b.tx < tx - lw / 2.0 - 1.0 || b.tx > tx + lw / 2.0 + 1.0;
                 if c.from_tile && b.from_tile && outside {
                     let lane = self.lane(right_side, left, right);
                     let by = c.y + self.st.grid * 0.5;

@@ -87,14 +87,7 @@ pub(super) fn extent_lr(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) ->
                 } else {
                     let idxs: Vec<usize> = (0..ext.len()).collect();
                     let (_, envl, envr) = super::ifnode::pack_plan(
-                        &idxs,
-                        &ext,
-                        &narrow,
-                        hinge,
-                        side_x,
-                        st.colgap,
-                        0.0,
-                        false,
+                        &idxs, &ext, &narrow, hinge, side_x, st.colgap, 0.0, false,
                     );
                     (envl, envr)
                 };
