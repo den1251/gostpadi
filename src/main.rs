@@ -53,6 +53,7 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
     --lw=N          толщина линий и усиков стрелок (по умолчанию 1.0)
     --no-split      не резать длинную схему на листы: один лист, в А4
                     вписывает общий масштаб пачки (для вставки в отчёт)
+    --landscape     листы А4 альбомные: широкие схемы читаются крупнее
     --no-fix        строгий разбор: не выправлять табы, CRLF, BOM, пробелы
                     в директивах (по умолчанию вход мягко нормализуется)
     --trim          в отчёт: SVG ровно по содержимому, размер в мм,
@@ -69,7 +70,7 @@ const HELP: &str = "gostpadi 2.0.0 — блок-схемы по ГОСТ 19.701 
         POST /export?mode=1|2|3 — SVG в мм / draw.io на схему / книга на пачку; ?lang=c|gvn.
 ";
 
-const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--no-fix] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
+const USAGE: &str = "использование: gostpadi схема.gvn [ещё.gvn|код.c ...] [-o out.svg|папка/] [--labels=ru|en] [--font=N] [--lw=N] [--no-split] [--landscape] [--no-fix] [--trim] [--drawio] [--check] [--template] [-h] [-V]";
 
 /// Базовый путь результата схемы: ".../stem.svg" (суффиксы листов добавит
 /// page_path). Имя схемы несёт и вход, и функцию («1/main.c#main») —
@@ -202,6 +203,7 @@ fn main() {
     let mut font: Option<f64> = None;
     let mut lw: Option<f64> = None;
     let mut no_split = false;
+    let mut landscape = false;
     let mut trim = false;
     let mut drawio = false;
     let mut check = false;
@@ -224,6 +226,7 @@ fn main() {
             "--template" => template = true,
             "--check" => check = true,
             "--no-split" => no_split = true,
+            "--landscape" => landscape = true,
             "--no-fix" => {
                 if cfg!(feature = "autofix") {
                     gostpadi::frontend::set_autofix(false);
@@ -313,7 +316,11 @@ fn main() {
         lw,
         no_split,
     };
-    let st = opts.style();
+    let mut st = opts.style();
+    if landscape {
+        // А4 альбом: те же поля, ширина и высота местами
+        std::mem::swap(&mut st.a4_w, &mut st.a4_h);
+    }
 
     if check {
         let schemes = match pipeline::parse_batch(&sources, &opts) {
