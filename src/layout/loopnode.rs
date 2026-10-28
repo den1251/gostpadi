@@ -174,8 +174,11 @@ impl Ctx<'_> {
             body_shapes.iter().any(|s| {
                 (s.cy + s.h / 2.0 > y0 + 1.0)
                     && (s.cy - s.h / 2.0 < y1 - 1.0)
-                    && (s.cx + s.w / 2.0 > x + 1.0)
-                    && (s.cx - s.w / 2.0 < x - 1.0)
+                    // x-диапазон с запасом 1pt: рельса не должна идти по
+                    // боковой кромке фигуры (иначе линия сливается с
+                    // границей блока)
+                    && (s.cx + s.w / 2.0 > x - 1.0)
+                    && (s.cx - s.w / 2.0 < x + 1.0)
             })
         };
         let breaks: Vec<BreakAt> = self.breaks.drain(mark..).collect();
@@ -213,7 +216,7 @@ impl Ctx<'_> {
     /// Рельсы стороны `right` сходятся в один коридор. Отрезки вертикали
     /// стыкуются T-узлами: у каждой рельсы свой отрезок, а не наложение
     /// хвостов (раньше все горизонтали шли до оси на одной высоте).
-    fn rail_corridor(&mut self, mut items: Vec<Rail>, lane: f64, bottom: f64, right: bool) {
+    fn rail_corridor(&mut self, mut items: Vec<Rail>, lane: f64, bottom: f64) {
         // break и continue в одном коридоре: если их горизонтали на одной
         // высоте, они сливаются в один отрезок и читаются как одна линия.
         // continue поднимаем на полшага — две ветви видны врозь.
@@ -244,7 +247,7 @@ impl Ctx<'_> {
         while i < items.len() {
             let by = items[i].by;
             let mut j = i;
-            let mut far = items[i].sx;
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
             while j < items.len() && (items[j].by - by).abs() < 1e-9 {
                 let r = &items[j];
                 // выход из плитки: вниз на полшага, иначе горизонталь
@@ -252,13 +255,19 @@ impl Ctx<'_> {
                 if by > r.sy + 1e-9 {
                     self.edge(&[(r.sx, r.sy), (r.sx, by)], false);
                 }
-                // одна горизонталь на все рельсы одной высоты: она
-                // начинается от крайней (дальней от коридора) и накрывает
-                // все капли — хвосты не накладываются друг на друга
-                far = if right { far.min(r.sx) } else { far.max(r.sx) };
+                lo = lo.min(r.sx);
+                hi = hi.max(r.sx);
                 j += 1;
             }
-            self.edge(&[(far, by), (lane, by)], false);
+            // Горизонтали с двух сторон от коридора: коридор может стоять
+            // МЕЖДУ рельсами (середина if), и одна горизонталь от крайней
+            // рельсы не дотянется до второй. Два отрезка сходятся в lane.
+            if lo < lane - 1e-9 {
+                self.edge(&[(lo, by), (lane, by)], false);
+            }
+            if hi > lane + 1e-9 {
+                self.edge(&[(hi, by), (lane, by)], false);
+            }
             if by < next - 1e-9 {
                 self.edge(&[(lane, by), (lane, next)], false);
             }
@@ -357,14 +366,33 @@ impl Ctx<'_> {
                     continue;
                 }
             }
-            let lane = self.lane(right_side, left, right);
+            // Один break + один continue: общая рельса посередине между
+            // ними, а не у дальнего края тела. Иначе обе горизонтали
+            // выходят из-за края схемы и читаются как стрелки «из ромба
+            // вправо»; середина между ветками — это ось ромба.
+            let mid = if bs.len() == 1 && cs.len() == 1 {
+                let x = (bs[0].tx + cs[0].tx) * 0.5;
+                let top = self.rail(bs[0], false).by.min(self.rail(cs[0], true).by);
+                let bottom = yj.max(cont_y);
+                if !blocked(x, top, bottom) {
+                    Some(x)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let lane = match mid {
+                Some(x) => x,
+                None => self.lane(right_side, left, right),
+            };
             let bottom = if bs.is_empty() { cont_y } else { yj };
             let items: Vec<Rail> = bs
                 .iter()
                 .map(|b| self.rail(b, false))
                 .chain(cs.iter().map(|b| self.rail(b, true)))
                 .collect();
-            self.rail_corridor(items, lane, bottom, right_side);
+            self.rail_corridor(items, lane, bottom);
             if !cs.is_empty() {
                 let x = if right_side {
                     tx + lw / 2.0
@@ -429,7 +457,7 @@ impl Ctx<'_> {
                 .map(|b| self.rail(b, false))
                 .chain(cs.iter().map(|b| self.rail(b, true)))
                 .collect();
-            self.rail_corridor(items, lane, bottom, right_side);
+            self.rail_corridor(items, lane, bottom);
             // На листе без нижней трапеции геометрия выхода одна (кружок
             // следующего листа), поэтому смысл несёт подпись — и когда
             // рельса одна, а не только при обоих смыслах в коридоре.

@@ -2780,3 +2780,68 @@ fn break_and_continue_leave_at_different_heights() {
     assert!(dangling_ok(&l).is_ok());
 }
 
+/// if/else с continue и break: общая рельса стоит МЕЖДУ ветками, а не
+/// у дальнего края тела. Иначе обе горизонтали уходят за край схемы и
+/// читаются как две стрелки «вправо» из одного ромба.
+#[test]
+fn shared_rail_sits_between_branches() {
+    let mut inner = node(NodeKind::Decision, "if a");
+    inner.branches = vec![
+        br("да", vec![s("printf(\"max\")"), Stmt::Continue], false),
+        br("нет", vec![s("printf(\"ok\")"), Stmt::Break], false),
+    ];
+    let mut outer = node(NodeKind::Decision, "if scanf");
+    outer.branches = vec![
+        br("да", vec![Stmt::Node(Box::new(inner))], false),
+        br("нет", vec![], false),
+    ];
+    let nodes = vec![
+        node(NodeKind::Term, "начало"),
+        loop_node("while i < 5", vec![Stmt::Node(Box::new(outer))]),
+        node(NodeKind::Term, "конец"),
+    ];
+    let l = lay(&nodes);
+    let tiles: Vec<&_> = l
+        .shapes
+        .iter()
+        .filter(|sh| sh.kind == "exit")
+        .collect();
+    assert_eq!(tiles.len(), 2, "continue и break — две плитки");
+    let mut lanes = Vec::new();
+    for t in &tiles {
+        let bottom = t.cy + t.h / 2.0;
+        // горизонталь рельсы: на полшага ниже плитки, тянется от её
+        // колонки к общему коридору
+        let e = l
+            .edges
+            .iter()
+            .find(|e| {
+                !e.arrow
+                    && e.points.len() == 2
+                    && (e.points[0].1 - e.points[1].1).abs() < 1e-9
+                    && e.points[0].1 > bottom - 1.0
+                    && e.points[0].1 < bottom + 40.0
+                    && (e.points[0].0 - e.points[1].0).abs() > 1.0
+                    && e.points[0].0.min(e.points[1].0) - 1.0 <= t.cx
+                    && t.cx <= e.points[0].0.max(e.points[1].0) + 1.0
+            })
+            .unwrap_or_else(|| panic!("рельса из плитки {:?}", t.lines));
+        let (a, b) = (e.points[0].0, e.points[1].0);
+        lanes.push(if (a - t.cx).abs() > (b - t.cx).abs() { a } else { b });
+    }
+    assert!(
+        (lanes[0] - lanes[1]).abs() < 1e-6,
+        "continue и break делят один коридор: {:?}",
+        lanes
+    );
+    let (a, b) = (tiles[0].cx.min(tiles[1].cx), tiles[0].cx.max(tiles[1].cx));
+    assert!(
+        lanes[0] > a + 1.0 && lanes[0] < b - 1.0,
+        "рельса {} между ветками {}..{}",
+        lanes[0],
+        a,
+        b
+    );
+}
+
+
