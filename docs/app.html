@@ -18,7 +18,18 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='9' y='2' width='14' height='8' rx='4' fill='none' stroke='%23aab0ff' stroke-width='2.4'/%3E%3Cpath d='M16 10v4M16 14l8 8-8 8-8-8z' fill='none' stroke='%23aab0ff' stroke-width='2.4'/%3E%3C/svg%3E">
 <style>
-  :root { color-scheme: dark; --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  :root {
+    color-scheme: dark;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* Одна шкала движения на всё приложение: 90 — отклик нажатия,
+       150 — появление, 240 — смена темы и крупные панели. */
+    --t-1: 90ms; --t-2: 150ms; --t-3: 240ms;
+    --e-out: cubic-bezier(.2, .8, .3, 1);
+    --e-in: cubic-bezier(.4, 0, .2, 1);
+    --r: 4px;
+    --sh-1: 0 1px 2px rgba(15, 0, 0, .10);
+    --sh-2: 0 8px 28px rgba(15, 0, 0, .18);
+  }
   /* Дуэт база-облига: светлая «ман-страница» (крем + чернила) и
      тёмная, инверсная. Стол схем — единственная инверсная зона:
      на светлой это чернила (#201d1d), на тёмной почти чёрный (#0f0a0a). */
@@ -85,6 +96,21 @@
   button, input, select, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; }
   a { color: var(--accent); }
+  /* Кольцо фокуса и цвет выделения — общие для всех элементов,
+     чтобы не зависели от того, кто их нарисовал. */
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+  * { scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line2); border-radius: 99px;
+    border: 3px solid transparent; background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+  #zoomval, #lbval, .menu .opt output { font-variant-numeric: tabular-nums; }
 
   /* ---------- каркас ---------- */
   header.top {
@@ -179,11 +205,11 @@
   .btn {
     border: 1px solid var(--line2); background: var(--panel2); color: var(--ink);
     border-radius: 4px; padding: 6px 12px; font-size: 13px;
-    transition: background-color .14s ease, border-color .14s ease,
-      color .14s ease, opacity .14s ease, transform .07s ease;
+    transition: background-color var(--t-2) var(--e-out), border-color var(--t-2) var(--e-out),
+      color var(--t-2) var(--e-out), opacity var(--t-2) var(--e-out), transform var(--t-1) var(--e-out);
   }
   .btn:hover { border-color: var(--muted); }
-  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
   .link {
     border: 0; background: none; color: var(--accent); padding: 2px 0;
     font: inherit; font-size: 12.5px; text-decoration: underline;
@@ -599,8 +625,14 @@
     position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
     background: var(--panel); border: 1px solid var(--line2); border-radius: 4px;
     padding: 4px; min-width: 170px;
+    animation: popin var(--t-2) var(--e-out) both;
+    transform-origin: top right;
   }
   .menu[hidden] { display: none; }
+  @keyframes popin {
+    from { opacity: 0; transform: translateY(-4px) scale(.98); }
+    to { opacity: 1; transform: none; }
+  }
   .menu button {
     display: block; width: 100%; text-align: left; border: 0; background: transparent;
     color: var(--ink); border-radius: 4px; padding: 8px 10px; font-size: 13px;
@@ -620,7 +652,7 @@
      его срезает overflow панели */
   #settings-menu {
     width: 236px; top: auto; bottom: calc(100% + 6px);
-    left: 0; right: auto;
+    left: 0; right: auto; transform-origin: bottom left;
   }
 
   @media (min-width: 1081px) {
@@ -678,11 +710,74 @@
     align-items: center; z-index: 55;
   }
   .toast[hidden] { display: none; }
+  .toast:not([hidden]) { animation: toastin var(--t-3) var(--e-out); }
+  @keyframes toastin {
+    from { opacity: 0; transform: translate(-50%, 8px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+  }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
+
+  /* ---------- мелочи, которые видно каждый день ---------- */
+
+  /* Подсказка вместо нативного title: 350 мс и тот же шрифт, что везде. */
+  #tip {
+    position: fixed; z-index: 90; pointer-events: none;
+    max-width: 280px; padding: 5px 8px; border-radius: var(--r);
+    background: var(--ink); color: var(--bg);
+    font: 12px/1.35 var(--mono);
+    opacity: 0; transform: translateY(2px);
+    transition: opacity var(--t-1) var(--e-out), transform var(--t-1) var(--e-out);
+  }
+  #tip.on { opacity: 1; transform: none; }
+
+  /* Полоса загрузки появляется, только если движок реально молчит:
+     быстрый старт не мигает. */
+  #loadbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 100;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
+    background-size: 40% 100%;
+    opacity: 0; pointer-events: none;
+    transition: opacity var(--t-3) var(--e-out);
+  }
+  #loadbar.on { opacity: 1; animation: loadslide 1.1s var(--e-in) infinite; }
+  #loadbar.done { opacity: 0; animation: none; }
+  @keyframes loadslide {
+    from { background-position: -40% 0; }
+    to { background-position: 140% 0; }
+  }
+
+  /* Строка состояния: смена текста заметна, но не дёргает вёрстку. */
+  #msg.flash { animation: msgflash var(--t-2) var(--e-out); }
+  @keyframes msgflash { from { opacity: .35; } to { opacity: 1; } }
+
+  #filelist:empty::after {
+    content: "пока пусто — добавь .c файл";
+    display: block; padding: 12px; color: var(--faint); font-size: 12px;
+  }
+
+  /* Тема меняется через переменные, поэтому цвет ведём переходом
+     только на время переключения. */
+  html.theming, html.theming body, html.theming header.top,
+  html.theming .pane, html.theming .pane-title, html.theming .btn,
+  html.theming .menu, html.theming #viewport, html.theming .dx-pan,
+  html.theming .toast, html.theming #stage .sheet, html.theming #tabbar {
+    transition: background-color var(--t-3) var(--e-out),
+      color var(--t-3) var(--e-out), border-color var(--t-3) var(--e-out) !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .menu, .toast, #msg.flash, #loadbar { animation: none; }
+    #tip { transition: none; }
+    html.theming, html.theming body, html.theming header.top, html.theming .pane,
+    html.theming .pane-title, html.theming .btn, html.theming .menu,
+    html.theming #viewport, html.theming .dx-pan, html.theming .toast,
+    html.theming #stage .sheet, html.theming #tabbar { transition: none !important; }
+  }
 </style>
 </head>
 <body data-mtab="edit">
+<div id="loadbar" aria-hidden="true"></div>
 <a class="skip" href="#code">к редактору</a>
 <header class="top">
   <a class="brand" href="./" title="gostpadi — на главную" aria-label="gostpadi, на главную">
@@ -1001,11 +1096,21 @@ const store = {
 /* Тема: auto (следует за системой) → light → dark по кругу. «Адатив» —
    дефолт по просьбе пользователя; ручной выбор запоминается. */
 const THEME_CYCLE = { auto: "light", light: "dark", dark: "auto" };
+let themeT = null;
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   store.set("gostpadi.theme", t);
+  /* Класс живёт ровно один переход: иначе цвета щёлкают мгновенно. */
+  document.documentElement.classList.add("theming");
+  clearTimeout(themeT);
+  themeT = setTimeout(() => document.documentElement.classList.remove("theming"), 260);
   const btn = $("theme");
-  if (btn) btn.title = { auto: "тема: как в системе", light: "тема: светлая", dark: "тема: тёмная" }[t];
+  if (btn) {
+    /* title снимаем: иначе перенос title→data-tip при старте
+       затирает актуальную подпись старой из разметки. */
+    btn.removeAttribute("title");
+    btn.dataset.tip = { auto: "тема: как в системе", light: "тема: светлая", dark: "тема: тёмная" }[t];
+  }
 }
 $("theme").addEventListener("click", () => {
   applyTheme(THEME_CYCLE[document.documentElement.dataset.theme] || "auto");
@@ -1030,7 +1135,11 @@ function status(html, isErr) {
   const el = $("statusline");
   el.className = isErr ? "err" : "";
   const m = $("msg");
-  if (m) m.innerHTML = html;
+  if (!m) return;
+  m.innerHTML = html;
+  m.classList.remove("flash");
+  void m.offsetWidth;
+  m.classList.add("flash");
 }
 let toastTimer = null;
 function toast(html) {
@@ -1042,6 +1151,65 @@ function toast(html) {
   const b = el.querySelector("button");
   if (b) b.addEventListener("click", undoRemove, { once: true });
 }
+
+/* ============================== подсказки ============================== */
+
+/* Нативный title ждёт секунду и рисуется системным шрифтом. Держим
+   подсказки в data-tip и показываем свои: 350 мс, в тон интерфейсу. */
+const tip = document.createElement("div");
+tip.id = "tip"; tip.setAttribute("aria-hidden", "true");
+document.body.appendChild(tip);
+let tipTimer = null, tipEl = null;
+function hideTip() {
+  clearTimeout(tipTimer);
+  tip.classList.remove("on");
+  tipEl = null;
+}
+function showTip(el) {
+  const text = el.dataset.tip;
+  if (!text) return;
+  tip.textContent = text;
+  tip.classList.add("on");
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  const x = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8));
+  const y = r.top - h - 8 < 8 ? r.bottom + 8 : r.top - h - 8;
+  tip.style.left = x + "px";
+  tip.style.top = y + "px";
+}
+function armTip(el) {
+  if (!el || el === tipEl) return;
+  hideTip();
+  tipEl = el;
+  tipTimer = setTimeout(() => showTip(el), 350);
+}
+document.addEventListener("pointerover", e => armTip(e.target.closest?.("[data-tip]")));
+document.addEventListener("pointerout", e => { if (e.target.closest?.("[data-tip]")) hideTip(); });
+/* Только клавиатурный фокус: после клика мышью подсказка не нужна. */
+document.addEventListener("focusin", e => {
+  const el = e.target.closest?.("[data-tip]");
+  if (el && el.matches(":focus-visible")) armTip(el);
+});
+document.addEventListener("focusout", hideTip);
+addEventListener("scroll", hideTip, true);
+addEventListener("pointerdown", hideTip, true);
+
+/* title → data-tip, включая элементы, которые JS создаёт позже. */
+const toTip = el => {
+  if (!el.title) return;
+  el.dataset.tip = el.title;
+  el.removeAttribute("title");
+};
+document.querySelectorAll("[title]").forEach(toTip);
+new MutationObserver(list => {
+  for (const m of list) {
+    if (m.type === "attributes") toTip(m.target);
+    else for (const n of m.addedNodes)
+      if (n.nodeType === 1) { toTip(n); n.querySelectorAll("[title]").forEach(toTip); }
+  }
+}).observe(document.body, {
+  subtree: true, childList: true, attributes: true, attributeFilter: ["title"],
+});
 
 /* ============================== wasm-движок ============================== */
 
@@ -3101,8 +3269,13 @@ if (!store.get("gostpadi.helpSeen")) {
   openGuide();
 }
 
+const loadbar = $("loadbar");
+const loadbarT = setTimeout(() => loadbar.classList.add("on"), 250);
 loadEngine().catch(e => {
   status("движок не загрузился: " + e.message, true);
+}).finally(() => {
+  clearTimeout(loadbarT);
+  loadbar.classList.add("done");
 });
 </script>
     <!-- Полный просмотр: клик по схеме в коллаже. В панели схема
