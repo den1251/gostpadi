@@ -83,7 +83,7 @@ impl Ctx<'_> {
         } else {
             Vec::new()
         };
-        // switch читается слева направо, у ромба «да» — справа
+        // switch читается слева направо, у ромба «да» — слева
         let (plan, envl, envr) = if n == 1 && !empty.is_empty() {
             single_plan(
                 idxs[0],
@@ -102,7 +102,7 @@ impl Ctx<'_> {
                 dw / 2.0,
                 self.st.colgap,
                 0.0,
-                !is_switch,
+                false,
             )
         };
         let env = envl.max(envr);
@@ -171,7 +171,7 @@ impl Ctx<'_> {
         let stubs: Vec<(f64, f64, String)> = stub
             .iter()
             .map(|(i, lbl)| {
-                let sgn = if *i == 0 { 1.0 } else { -1.0 };
+                let sgn = if *i == 0 { -1.0 } else { 1.0 };
                 (sgn * (dw / 2.0 + self.st.hgap), sgn, lbl.clone())
             })
             .collect();
@@ -555,9 +555,9 @@ impl Ctx<'_> {
     }
 
     /// Каскад else-if: ромбы цепочки на оси друг под другом. У каждого
-    /// ромба «да» — колонка СПРАВА, «нет» — колено влево: к следующему
+    /// ромба «да» — колонка СЛЕВА, «нет» — колено вправо: к следующему
     /// ромбу (горизонталь, спуск, стрелка в верхнюю вершину) или к
-    /// хвосту-колонке слева. Вертикали из нижней вершины ромба нет.
+    /// хвосту-колонке справа. Вертикали из нижней вершины ромба нет.
     /// Слияние: спуски живых колонок и ровно одна горизонтальная шина.
     fn decision_cascade(
         &mut self,
@@ -589,6 +589,8 @@ impl Ctx<'_> {
         let top0 = cy0 + dh / 2.0 + self.vg();
         // Абсциссы «да»-колонок — по содержимому своих ветвей (как в
         // остальных ромбах): общий nhe тянул шину через пол-листа.
+        // Колонки слева: ближняя кромка — правый вынос r, поэтому ось
+        // считается от r и упаковка идёт влево.
         let hinge = dw / 2.0 + self.st.hgap;
         let exts: Vec<(f64, f64)> = links
             .iter()
@@ -597,17 +599,17 @@ impl Ctx<'_> {
         let mut xs = vec![0.0f64; k];
         let mut edge = hinge;
         for (ci, &(l, r)) in exts.iter().enumerate() {
-            xs[ci] = edge + l;
-            edge = xs[ci] + r + self.st.colgap;
+            xs[ci] = -(edge + r);
+            edge = -xs[ci] + l + self.st.colgap;
         }
         let env = exts
             .iter()
             .enumerate()
-            .map(|(ci, &(_, r))| xs[ci] + r)
+            .map(|(ci, &(l, _))| -xs[ci] + l)
             .fold(hinge, f64::max);
-        // «да»-гребёнка: общий вертикальный участок в коридоре справа от
+        // «да»-гребёнка: общий вертикальный участок в коридоре слева от
         // ромбов, у каждой ветви своя высота обхода над колонками.
-        let x_v = dw / 2.0 + self.st.grid;
+        let x_v = -(dw / 2.0 + self.st.grid);
         let y_over = |ci: usize| top0 - (ci + 1) as f64 * self.st.grid;
         let y_top = (0..k)
             .map(|ci| (cy0 + step * ci as f64).min(y_over(ci)))
@@ -623,32 +625,32 @@ impl Ctx<'_> {
             let (_, b) = links[ci];
             let cy = cy0 + step * ci as f64;
             let tx = xs[ci];
-            self.edge(&[(dw / 2.0, cy), (x_v, cy)], false);
+            self.edge(&[(-dw / 2.0, cy), (x_v, cy)], false);
             self.edge(&[(x_v, y_over(ci)), (tx, y_over(ci))], false);
             self.edge(
                 &[(tx, y_over(ci)), (tx, top0)],
                 !(rail_only(&b.stmts) && self.loop_depth + self.switch_depth > 0),
             );
             self.labels.push(Label {
-                x: dw / 2.0 + self.st.label_exit_dx,
+                x: -(dw / 2.0 + self.st.label_exit_dx),
                 y: cy - self.st.label_dy,
                 text: b.label.clone(),
                 ha: "center".into(),
             });
             let (yend, end) = self.render_column(&b.stmts, tx, top0);
-            exits.push((tx, yend, end, b.to_end, b.link, false));
+            exits.push((tx, yend, end, b.to_end, b.link, true));
         }
         self.case_direct = saved_direct;
-        // «нет» звеньев: своя полоса у каждого звена (левее на шаг),
+        // «нет» звеньев: своя полоса у каждого звена (правее на шаг),
         // конец колена выше ромба-приёмника — вертикалей из ромбов нет.
         for i in 0..k.saturating_sub(1) {
             let y = cy0 + step * i as f64;
-            let lane = -(dw / 2.0 + (i + 1) as f64 * self.st.grid);
+            let lane = dw / 2.0 + (i + 1) as f64 * self.st.grid;
             let y_top_next = cy0 + step * (i + 1) as f64 - dh / 2.0;
             let y_entry = y_top_next - self.st.grid;
             self.edge(
                 &[
-                    (-dw / 2.0, y),
+                    (dw / 2.0, y),
                     (lane, y),
                     (lane, y_entry),
                     (0.0, y_entry),
@@ -657,13 +659,13 @@ impl Ctx<'_> {
                 true,
             );
             self.labels.push(Label {
-                x: -(dw / 2.0 + (i as f64 + 0.5) * self.st.grid),
+                x: dw / 2.0 + (i as f64 + 0.5) * self.st.grid,
                 y: y - self.st.label_dy,
                 text: links[i].0.branches.last().unwrap().label.clone(),
                 ha: "center".into(),
             });
         }
-        // хвост-«нет» последнего ромба: непустой — колонка слева (верх
+        // хвост-«нет» последнего ромба: непустой — колонка справа (верх
         // общий с да-колонками), пустой — рельса к шине слияния.
         let y_last = cy0 + step * (k - 1) as f64;
         let y_b_last = y_last + dh / 2.0;
@@ -675,15 +677,15 @@ impl Ctx<'_> {
         let mut bus_xs: Vec<f64> = vec![0.0];
         let mut has_rail = false;
         if !tail.stmts.is_empty() {
-            // Хвост стоит левее всех «нет»-колен: правый край его колонки —
+            // Хвост стоит правее всех «нет»-колен: левый край его колонки —
             // за последней полосой, иначе вертикаль колена шла бы сквозь
             // верхнюю плитку хвоста.
-            let right = -(dw / 2.0 + k as f64 * self.st.grid);
-            let tail_x = right - self.st.grid - tail_ext.1;
+            let right = dw / 2.0 + k as f64 * self.st.grid;
+            let tail_x = right + self.st.grid + tail_ext.0;
             let y_over_tail = top0 - self.st.grid;
             self.edge(
                 &[
-                    (-dw / 2.0, y_last),
+                    (dw / 2.0, y_last),
                     (right, y_last),
                     (right, y_over_tail),
                     (tail_x, y_over_tail),
@@ -692,16 +694,16 @@ impl Ctx<'_> {
                 true,
             );
             self.labels.push(Label {
-                x: (-dw / 2.0 + right) / 2.0,
+                x: (dw / 2.0 + right) / 2.0,
                 y: y_last - self.st.label_dy,
                 text: tail.label.clone(),
                 ha: "center".into(),
             });
             let (yend, end) = self.render_column(&tail.stmts, tail_x, top0);
-            exits.push((tail_x, yend, end, tail.to_end, tail.link, true));
+            exits.push((tail_x, yend, end, tail.to_end, tail.link, false));
         }
         let col_bottom = exits.iter().map(|e| e.1).fold(y_b_last, f64::max);
-        // в каскаде осевой колонки нет: хвост-«нет» стоит слева
+        // в каскаде осевой колонки нет: хвост-«нет» стоит справа
         let axis_tail: Option<f64> = None;
         let mut merge_y = y_b_last + 2.0 * self.st.grid;
         for &(_, yend, end, to_end, _, _) in &exits {
@@ -753,14 +755,14 @@ impl Ctx<'_> {
                 });
             }
         }
-        // пустой хвост: рельса «нет» на левой стороне, жмётся к ромбу
+        // пустой хвост: рельса «нет» на правой стороне, жмётся к ромбу
         if tail.stmts.is_empty() {
             has_rail = true;
             let bx = super::geometry::up(dw / 2.0 + 2.0 * self.st.grid, self.st.grid);
-            self.edge(&[(-dw / 2.0, y_last), (-bx, y_last), (-bx, merge_y)], false);
-            bus_xs.push(-bx);
+            self.edge(&[(dw / 2.0, y_last), (bx, y_last), (bx, merge_y)], false);
+            bus_xs.push(bx);
             self.labels.push(Label {
-                x: -(dw / 2.0 + self.st.grid),
+                x: dw / 2.0 + self.st.grid,
                 y: y_last - self.st.label_dy,
                 text: tail.label.clone(),
                 ha: "center".into(),

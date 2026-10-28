@@ -56,6 +56,10 @@ struct Rail {
     sx: f64,
     sy: f64,
     by: f64,
+    /// continue, а не break: при обоих смыслах в одном коридоре
+    /// горизонтали разводятся по высоте, иначе две ветви сливаются
+    /// в одну линию и не читаются
+    cont: bool,
 }
 
 impl Ctx<'_> {
@@ -210,6 +214,25 @@ impl Ctx<'_> {
     /// стыкуются T-узлами: у каждой рельсы свой отрезок, а не наложение
     /// хвостов (раньше все горизонтали шли до оси на одной высоте).
     fn rail_corridor(&mut self, mut items: Vec<Rail>, lane: f64, bottom: f64, right: bool) {
+        // break и continue в одном коридоре: если их горизонтали на одной
+        // высоте, они сливаются в один отрезок и читаются как одна линия.
+        // continue поднимаем на полшага — две ветви видны врозь.
+        let mixed = items.iter().any(|r| r.cont) && items.iter().any(|r| !r.cont);
+        if mixed {
+            for r in &mut items {
+                if r.cont {
+                    // continue выше, break ниже: между горизонталями
+                    // целая клетка, иначе на листе А4 они сливаются
+                    if r.by > r.sy + 1e-9 {
+                        r.by -= self.st.grid * 0.5;
+                    } else {
+                        r.by += self.st.grid * 0.5;
+                    }
+                } else {
+                    r.by += self.st.grid * 0.5;
+                }
+            }
+        }
         items.sort_by(|a, b| {
             b.by.partial_cmp(&a.by)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -265,12 +288,13 @@ impl Ctx<'_> {
         }
     }
 
-    fn rail(&self, b: &BreakAt) -> Rail {
+    fn rail(&self, b: &BreakAt, cont: bool) -> Rail {
         let by = if b.from_tile { b.y + self.st.grid } else { b.y };
         Rail {
             sx: b.tx,
             sy: b.y,
             by,
+            cont,
         }
     }
 
@@ -308,7 +332,11 @@ impl Ctx<'_> {
         right: f64,
         blocked: &impl Fn(f64, f64, f64) -> bool,
     ) {
-        let cont_y = cy2 - self.st.grid;
+        // continue входит в БОК loop_end: середина вертикального участка
+        // боковой кромки (ниже верхней кромки на h/4), а не в её верхний
+        // угол — линия на кромке читалась как продолжение границы блока
+        let lh = self.sizes["loop"].1;
+        let cont_y = cy2 - lh / 4.0;
         for right_side in [false, true] {
             let bs: Vec<&BreakAt> = breaks
                 .iter()
@@ -324,14 +352,18 @@ impl Ctx<'_> {
                 let b = bs[0];
                 let outside = b.tx < tx - lw / 2.0 || b.tx > tx + lw / 2.0;
                 if b.from_tile && outside && !blocked(b.tx, b.y, yj) {
-                    let r = self.rail(b);
+                    let r = self.rail(b, false);
                     self.edge(&[(r.sx, r.sy), (r.sx, yj), (tx, yj)], false);
                     continue;
                 }
             }
             let lane = self.lane(right_side, left, right);
             let bottom = if bs.is_empty() { cont_y } else { yj };
-            let items: Vec<Rail> = bs.iter().chain(cs.iter()).map(|b| self.rail(b)).collect();
+            let items: Vec<Rail> = bs
+                .iter()
+                .map(|b| self.rail(b, false))
+                .chain(cs.iter().map(|b| self.rail(b, true)))
+                .collect();
             self.rail_corridor(items, lane, bottom, right_side);
             if !cs.is_empty() {
                 let x = if right_side {
@@ -392,7 +424,11 @@ impl Ctx<'_> {
             };
             let brk_y = y_exit + self.st.grid * 0.5;
             let bottom = if bs.is_empty() { cont_y } else { brk_y };
-            let items: Vec<Rail> = bs.iter().chain(cs.iter()).map(|b| self.rail(b)).collect();
+            let items: Vec<Rail> = bs
+                .iter()
+                .map(|b| self.rail(b, false))
+                .chain(cs.iter().map(|b| self.rail(b, true)))
+                .collect();
             self.rail_corridor(items, lane, bottom, right_side);
             // На листе без нижней трапеции геометрия выхода одна (кружок
             // следующего листа), поэтому смысл несёт подпись — и когда

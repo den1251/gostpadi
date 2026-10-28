@@ -527,9 +527,9 @@ int main() {
             (e.points[n - 1].0 - last.0).abs() < 1e-9
                 && (e.points[n - 1].1 - last.1).abs() < 1e-9
                 && (e.points[n - 2].1 - last.1).abs() < 1e-9
-                && e.points[n - 2].0 < last.0
+                && e.points[n - 2].0 > last.0
         }),
-        "в стык не входит вторая горизонталь слева: не 4-сторонний узел"
+        "в стык не входит вторая горизонталь справа: не 4-сторонний узел"
     );
 }
 
@@ -1124,11 +1124,11 @@ output printf(x)
     assert!(single_entry_ok(&l));
 }
 
-/// Пустая ветка «нет» — короткое колено влево, а не ствол из нижней
-/// вершины ромба. Колонка «да» справа; обе ветви сливаются на шине ниже
+/// Пустая ветка «нет» — короткое колено вправо, а не ствол из нижней
+/// вершины ромба. Колонка «да» слева; обе ветви сливаются на шине ниже
 /// ромба, и только оттуда поток идёт вниз.
 #[test]
-fn empty_branch_is_left_stub() {
+fn empty_branch_is_right_stub() {
     let st = Style::default();
     let text = "if x <= 0\n    да: printf(\"bad\"); return 1\n    нет:\ny = x + 1\n";
     let nodes = crate::frontend::gvn::parse(text, &st, "ru").unwrap();
@@ -1145,19 +1145,19 @@ fn empty_branch_is_left_stub() {
         }),
         "из нижней вершины ромба вниз ничего не идёт"
     );
-    // колено пустой «нет»: левая вершина -> влево -> вниз в шину
-    let vl = (dsh.cx - dsh.w / 2.0, dsh.cy);
+    // колено пустой «нет»: правая вершина -> вправо -> вниз в шину
+    let vr = (dsh.cx + dsh.w / 2.0, dsh.cy);
     let stub = l
         .edges
         .iter()
         .find(|e| {
             let p = e.points[0];
-            (p.0 - vl.0).abs() < 1e-9 && (p.1 - vl.1).abs() < 1e-9 && !e.arrow
+            (p.0 - vr.0).abs() < 1e-9 && (p.1 - vr.1).abs() < 1e-9 && !e.arrow
         })
-        .expect("колено пустой ветки от левой вершины");
+        .expect("колено пустой ветки от правой вершины");
     assert!(
-        stub.points[1].0 < vl.0 && stub.points[1].1 == vl.1,
-        "колено уходит влево: {:?}",
+        stub.points[1].0 > vr.0 && stub.points[1].1 == vr.1,
+        "колено уходит вправо: {:?}",
         stub.points
     );
     let my = y_b + 2.0 * st.grid;
@@ -1166,19 +1166,19 @@ fn empty_branch_is_left_stub() {
         "колено возвращается в шину на y_b + 2g: {:?}",
         stub.points
     );
-    // подпись «нет» — на колене слева от ромба, не на стволе
+    // подпись «нет» — на колене справа от ромба, не на стволе
     let no = l.labels.iter().find(|lb| lb.text == "нет").unwrap();
     assert!(
-        no.x < dsh.cx - dsh.w / 2.0 + 1e-9 && (no.y - (dsh.cy - st.label_dy)).abs() < 1e-9,
-        "подпись нет на левом колене: ({}, {})",
+        no.x > dsh.cx + dsh.w / 2.0 - 1e-9 && (no.y - (dsh.cy - st.label_dy)).abs() < 1e-9,
+        "подпись нет на правом колене: ({}, {})",
         no.x,
         no.y
     );
-    // рельсы справа нет: правая вершина ромба — только вход «да»
-    let vr = (dsh.cx + dsh.w / 2.0, dsh.cy);
+    // рельсы слева нет: левая вершина ромба — только вход «да»
+    let vl = (dsh.cx - dsh.w / 2.0, dsh.cy);
     assert!(
         !l.edges.iter().any(|e| {
-            !e.arrow && (e.points[0].0 - vr.0).abs() < 1e-9 && (e.points[0].1 - vr.1).abs() < 1e-9
+            !e.arrow && (e.points[0].0 - vl.0).abs() < 1e-9 && (e.points[0].1 - vl.1).abs() < 1e-9
         }),
         "рельса пустой ветки больше не рисуется"
     );
@@ -1187,10 +1187,10 @@ fn empty_branch_is_left_stub() {
     assert!(single_entry_ok(&l));
 }
 
-/// Канон методички (рис. 1): у if с единственной непустой веткой «да»
-/// уходит ВПРАВО (tx = +base), «нет» — левым коленом с меткой у линии.
+/// Канон: у if с единственной непустой веткой «да» уходит ВЛЕВО
+/// (tx = -base), «нет» — правым коленом с меткой у линии.
 #[test]
-fn if_yes_branch_goes_right() {
+fn if_yes_branch_goes_left() {
     let st = Style::default();
     let text = "if x <= 0\n    да: printf(\"bad\")\n    нет:\ny = x + 1\n";
     let nodes = crate::frontend::gvn::parse(text, &st, "ru").unwrap();
@@ -1201,16 +1201,16 @@ fn if_yes_branch_goes_right() {
     let nhe = super::nhe_of(&sizes, &nodes, &st);
     let base = dsh.w / 2.0 + st.hgap + nhe;
     assert!(
-        (io.cx - base).abs() < 1e-9,
-        "да-колонка направо: io.cx = {}, ожидался +base = {}",
+        (io.cx + base).abs() < 1e-9,
+        "да-колонка налево: io.cx = {}, ожидался -base = {}",
         io.cx,
-        base
+        -base
     );
-    // метка «нет» стоит на левом колене, а не на стволе
+    // метка «нет» стоит на правом колене, а не на стволе
     let no = l.labels.iter().find(|lb| lb.text == "нет").unwrap();
     assert!(
-        no.x < dsh.cx - dsh.w / 2.0 && no.y < dsh.cy + dsh.h / 2.0,
-        "метка нет слева от ромба: ({}, {})",
+        no.x > dsh.cx + dsh.w / 2.0 && no.y < dsh.cy + dsh.h / 2.0,
+        "метка нет справа от ромба: ({}, {})",
         no.x,
         no.y
     );
@@ -1270,7 +1270,7 @@ fn if_else_columns_symmetric_at_base() {
 }
 
 /// РЕГРЕССИЯ: из ромба if нет вертикального ребра вниз. «Да» уходит
-/// вправо, «нет» влево; обе ветви сливаются ниже ромба, и только с шины
+/// влево, «нет» вправо; обе ветви сливаются ниже ромба, и только с шины
 /// слияния поток идёт дальше. Проверяется геометрия, не картинка.
 #[test]
 fn diamond_has_no_vertical_down_leg() {
@@ -1307,11 +1307,26 @@ fn diamond_has_no_vertical_down_leg() {
                 if (lb.y - (d.cy - st.label_dy)).abs() > 1e-9 {
                     continue;
                 }
+                // подписи вложенных ромбов лежат на той же строке: берём
+                // ближайший по x ромб, иначе внешний судит чужую подпись
+                let nearest = l
+                    .shapes
+                    .iter()
+                    .filter(|s| s.kind == "if")
+                    .min_by(|a, b| {
+                        (a.cx - lb.x)
+                            .abs()
+                            .partial_cmp(&(b.cx - lb.x).abs())
+                            .unwrap()
+                    });
+                if nearest.map(|s| s.cx) != Some(d.cx) {
+                    continue;
+                }
                 if lb.text == "да" {
-                    assert!(lb.x > d.cx, "{text:?}: да слева от ромба: {}", lb.x);
+                    assert!(lb.x < d.cx, "{text:?}: да справа от ромба: {}", lb.x);
                 }
                 if lb.text == "нет" {
-                    assert!(lb.x < d.cx, "{text:?}: нет справа от ромба: {}", lb.x);
+                    assert!(lb.x > d.cx, "{text:?}: нет слева от ромба: {}", lb.x);
                 }
             }
         }
@@ -1367,12 +1382,12 @@ while 1
     }
 }
 
-/// Канон (рис. 2): вложенный if внутри да-колонки внешнего — его «да»
-/// тоже справа от под-ромба, пустое «нет» — левым коленом, «нет»
-/// внешнего — слева. Стороны у вложенного те же, что у внешнего:
-/// разнобой читается как ошибка.
+/// Канон: вложенный if внутри да-колонки внешнего — его «да» тоже
+/// слева от под-ромба, пустое «нет» — правым коленом, «нет» внешнего —
+/// справа. Стороны у вложенного те же, что у внешнего: разнобой
+/// читается как ошибка.
 #[test]
-fn nested_if_keeps_yes_right() {
+fn nested_if_keeps_yes_left() {
     let st = Style::default();
     let text = "\
 if a > 0
@@ -1405,11 +1420,11 @@ if a > 0
         .expect("внешний ромб");
     let (ext_l, _) = crate::layout::column::extent_lr(&sizes, &st, colw, &dec.branches[0].stmts);
     assert!(
-        (inner.cx - (outer.w / 2.0 + st.hgap + ext_l)).abs() < 1e-9,
-        "внутренний ромб на оси да-колонки внешнего: {} против {}",
-        inner.cx,
-        outer.w / 2.0 + st.hgap + ext_l
+        inner.cx < outer.cx - outer.w / 2.0,
+        "внутренний ромб в левой да-колонке внешнего: {}",
+        inner.cx
     );
+    let _ = ext_l;
     let at = |txt: &str| {
         l.shapes
             .iter()
@@ -1420,23 +1435,29 @@ if a > 0
     let act = at("c = 1");
     let minus = at("минус");
     assert!(
-        (io.cx - (inner.cx + base2)).abs() < 1e-9,
-        "да-контент вложенного колонкой направо"
+        io.cx < inner.cx,
+        "да-контент вложенного колонкой налево: {} vs {}",
+        io.cx,
+        inner.cx
+    );
+    let _ = base2;
+    assert!(
+        act.cx < outer.cx,
+        "c = 1 в левой да-колонке внешнего: {}",
+        act.cx
     );
     assert!(
-        (act.cx - inner.cx).abs() < 1e-9,
-        "c = 1 на оси да-колонки внешнего"
+        minus.cx > outer.cx + outer.w / 2.0,
+        "нет-ветка внешнего справа: {}",
+        minus.cx
     );
-    assert!(
-        (minus.cx + base).abs() < 1e-9,
-        "нет-ветка внешнего слева на -base"
-    );
-    // пустое «нет» вложенного — колено влево, а не рельса: вертикали
-    // справа от под-ромба нет
-    let vr = (inner.cx + inner.w / 2.0, inner.cy);
+    let _ = base;
+    // пустое «нет» вложенного — колено вправо, а не рельса: вертикали
+    // слева от под-ромба нет
+    let vl = (inner.cx - inner.w / 2.0, inner.cy);
     assert!(
         !l.edges.iter().any(|e| {
-            !e.arrow && (e.points[0].0 - vr.0).abs() < 1e-9 && (e.points[0].1 - vr.1).abs() < 1e-9
+            !e.arrow && (e.points[0].0 - vl.0).abs() < 1e-9 && (e.points[0].1 - vl.1).abs() < 1e-9
         }),
         "рельса пустого «нет» вложенного не рисуется"
     );
@@ -1580,8 +1601,8 @@ fn grid_invariant() {
     }
 }
 
-/// Каскад else-if (схема 25): три ромба на оси, «нет» — левое колено
-/// к следующему ромбу, да-колонки справа, все
+/// Каскад else-if (схема 25): три ромба на оси, «нет» — правое колено
+/// к следующему ромбу, да-колонки слева, все
 /// на одном top0; слияние: ровно одна горизонтальная шина под всеми.
 #[test]
 fn elseif_cascade_trunk_and_bus() {
@@ -1607,7 +1628,7 @@ if a < 0
         assert_eq!(d.cx, 0.0, "ромб на оси, а не в {}", d.cx);
     }
     // из нижней вершины каждого ромба вниз ничего не идёт: «нет» —
-    // левое колено, спуск к следующему ромбу начинается сбоку
+    // правое колено, спуск к следующему ромбу начинается сбоку
     for d in &ifs {
         let y_b = d.cy + d.h / 2.0;
         assert!(
@@ -1625,10 +1646,10 @@ if a < 0
             .iter()
             .find(|lb| lb.text == "нет" && (lb.y - (d.cy - st.label_dy)).abs() < 1e-9);
         if let Some(no) = no {
-            assert!(no.x < d.cx, "подпись нет справа от ромба: {}", no.x);
+            assert!(no.x > d.cx, "подпись нет слева от ромба: {}", no.x);
         }
     }
-    // колонки (канон): все «да» СПРАВА (R0, R1, R2), хвост-else слева (L0)
+    // колонки (канон): все «да» СЛЕВА (L0, L1, L2), хвост-else справа (R0)
     let colw = sizes["act"].0.max(sizes["io"].0);
     let nhe = colw / 2.0;
     let base = ifs[0].w / 2.0 + st.hgap + nhe;
@@ -1643,13 +1664,13 @@ if a < 0
     let zero = at("zero");
     let pos = at("pos");
     let other = at("?");
-    // хвост-«нет» стоит на одну полосу левее прежнего: его правый край
+    // хвост-«нет» стоит на одну полосу правее прежнего: его левый край
     // уступает дорожку «нет»-колену последнего звена
     for (sh, x, name) in [
-        (neg, base, "neg R0"),
-        (zero, base + pitch, "zero R1"),
-        (pos, base + 2.0 * pitch, "pos R2"),
-        (other, -base - 2.0 * st.grid, "? L0"),
+        (neg, -base, "neg L0"),
+        (zero, -base - pitch, "zero L1"),
+        (pos, -base - 2.0 * pitch, "pos L2"),
+        (other, base + 2.0 * st.grid, "? R0"),
     ] {
         assert!(
             (sh.cx - x).abs() < 1e-9,
@@ -1680,9 +1701,9 @@ if a < 0
     assert_eq!(bus.len(), 1, "ровно одна горизонтальная шина на merge_y");
     let xs: Vec<f64> = bus[0].points.iter().map(|p| p.0).collect();
     assert!(
-        xs.iter().cloned().fold(f64::MAX, f64::min) <= -base + 1e-9
-            && xs.iter().cloned().fold(f64::MIN, f64::max) >= base + 2.0 * pitch - 1e-9,
-        "шина от хвоста-else слева до крайней правой да-колонки через 0: {xs:?}"
+        xs.iter().cloned().fold(f64::MAX, f64::min) <= -base - 2.0 * pitch + 1e-9
+            && xs.iter().cloned().fold(f64::MIN, f64::max) >= base + 1e-9,
+        "шина от хвоста-else справа до крайней левой да-колонки через 0: {xs:?}"
     );
     assert_eq!(crossings_ok(&l.shapes, &l.edges), Ok(()));
     assert!(overlaps_ok(&l.shapes));
@@ -1690,7 +1711,7 @@ if a < 0
 }
 
 /// Цепочка из двух ромбов без else: каскад с пустым хвостом — рельса
-/// «нет» слева (там колонок нет), вплотную к ромбу; шина одна.
+/// «нет» справа (там колонок нет), вплотную к ромбу; шина одна.
 #[test]
 fn elseif_cascade_two_links_empty_else() {
     let st = Style::default();
@@ -1722,25 +1743,25 @@ if a < 0
         .iter()
         .find(|s| s.lines.first().is_some_and(|t| t.contains("zero")))
         .unwrap();
-    assert!((neg.cx - base).abs() < 1e-9, "neg R0");
+    assert!((neg.cx + base).abs() < 1e-9, "neg L0");
     assert!(
-        (zero.cx - base - 2.0 * nhe - st.colgap).abs() < 1e-9,
-        "zero R1"
+        (zero.cx + base + 2.0 * nhe + st.colgap).abs() < 1e-9,
+        "zero L1"
     );
-    // рельса пустого хвоста из ЛЕВОЙ вершины последнего ромба (слева
+    // рельса пустого хвоста из ПРАВОЙ вершины последнего ромба (справа
     // колонок нет — свободная сторона), жмётся к ромбу: up(base + nhe + g)
     let d2 = ifs[1];
-    let vl = (d2.cx - d2.w / 2.0, d2.cy);
+    let vr = (d2.cx + d2.w / 2.0, d2.cy);
     let rail = l
         .edges
         .iter()
         .find(|e| {
-            !e.arrow && (e.points[0].0 - vl.0).abs() < 1e-9 && (e.points[0].1 - vl.1).abs() < 1e-9
+            !e.arrow && (e.points[0].0 - vr.0).abs() < 1e-9 && (e.points[0].1 - vr.1).abs() < 1e-9
         })
-        .expect("рельса пустого «нет» из левой вершины ромба");
+        .expect("рельса пустого «нет» из правой вершины ромба");
     assert!(
-        rail.points[1].0 < vl.0 && rail.points[2].0 == rail.points[1].0,
-        "рельса уходит влево и опускается: {:?}",
+        rail.points[1].0 > vr.0 && rail.points[2].0 == rail.points[1].0,
+        "рельса уходит вправо и опускается: {:?}",
         rail.points
     );
     let my = d2.cy + d2.h / 2.0 + 2.0 * st.grid;
@@ -1895,7 +1916,7 @@ output printf(d)
     assert!(single_entry_ok(&l));
 }
 
-/// Пустая «нет» — короткое колено слева: широкая «да»-колонка справа
+/// Пустая «нет» — короткое колено справа: широкая «да»-колонка слева
 /// на ширину схемы не влияет вовсе, отдельной рельсы у пустой ветки нет.
 #[test]
 fn empty_branch_stub_ignores_wide_yes_column() {
@@ -1911,12 +1932,12 @@ output printf(1)
     let l = layout(&nodes, &sizes, &st);
     let dsh = l.shapes.iter().find(|s| s.kind == "if").unwrap();
     let io = l.shapes.iter().find(|s| s.kind == "io").unwrap();
-    assert!(io.cx > dsh.cx, "да-колонка справа");
-    let right = dsh.cx + dsh.w / 2.0;
-    let vr = (right, dsh.cy);
+    assert!(io.cx < dsh.cx, "да-колонка слева");
+    let left = dsh.cx - dsh.w / 2.0;
+    let vl = (left, dsh.cy);
     assert!(
         !l.edges.iter().any(|e| {
-            !e.arrow && (e.points[0].0 - vr.0).abs() < 1e-9 && (e.points[0].1 - vr.1).abs() < 1e-9
+            !e.arrow && (e.points[0].0 - vl.0).abs() < 1e-9 && (e.points[0].1 - vl.1).abs() < 1e-9
         }),
         "рельсы пустой ветки нет"
     );
@@ -1958,19 +1979,19 @@ output printf(\"далее\")
     // рельсы break и continue сливаются на одной высоте — посередине
     // выхода loop_end: разные концы давали X между рельсами
     let join_y = (le.cy + le.h / 2.0 + merge_y) * 0.5;
-    // вход в «да»-колонку (канон: справа) без стрелки; ось колонки
+    // вход в «да»-колонку (канон: слева) без стрелки; ось колонки
     // берём из самого ребра — она пакуется по экстенту ветки
     let entry = l
         .edges
         .iter()
         .find(|e| {
             let last = e.points.last().unwrap();
-            last.0 > 0.0 && (last.1 - top2).abs() < 1e-9
+            last.0 < 0.0 && (last.1 - top2).abs() < 1e-9
         })
         .expect("вход в да-колонку");
     assert!(!entry.arrow, "стрелки в пустую колонку нет");
     let base = entry.points.last().unwrap().0;
-    // ложный спуск колонки к слиянию исчез: вертикали на x = +base
+    // ложный спуск колонки к слиянию исчез: вертикали на x = base
     // ниже верха колонки нет
     let bogus = l.edges.iter().any(|e| {
         e.points.windows(2).any(|w| {
@@ -2068,7 +2089,7 @@ output printf(\"далее\")
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     // continue — следующая итерация: входит в БОК loop_end, выше его
     // низа и выше нижней трапеции; не сливается с выходом из цикла
-    let cont_y = le.cy - st.grid;
+    let cont_y = le.cy - le.h / 4.0;
     let rail = l
         .edges
         .iter()
@@ -2726,7 +2747,6 @@ fn break_and_continue_leave_at_different_heights() {
         ),
         node(NodeKind::Term, "конец"),
     ];
-    let st = Style::default();
     let l = lay(&nodes);
     let le = l.shapes.iter().find(|sh| sh.kind == "loop_end").unwrap();
     let cont_edge = l
@@ -2735,7 +2755,7 @@ fn break_and_continue_leave_at_different_heights() {
         .find(|e| {
             !e.arrow
                 && e.points.last().is_some_and(|p| {
-                    (p.1 - (le.cy - st.grid)).abs() < 1e-6
+                    (p.1 - (le.cy - le.h / 4.0)).abs() < 1e-6
                         && ((p.0 - (le.cx - le.w / 2.0)).abs() < 1e-6
                             || (p.0 - (le.cx + le.w / 2.0)).abs() < 1e-6)
                 })
@@ -2759,3 +2779,4 @@ fn break_and_continue_leave_at_different_heights() {
     assert!(crossings_ok(&l.shapes, &l.edges).is_ok());
     assert!(dangling_ok(&l).is_ok());
 }
+

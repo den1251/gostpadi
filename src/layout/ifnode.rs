@@ -11,9 +11,10 @@ pub(super) enum Side {
 }
 
 /// Ярусы колонок ромба: (индекс среди непустых веток, сторона, ярус).
-/// Канон методички (рис. 1–4): у ромба «да» (первая ветка) — вправо,
-/// «нет» — влево. У switch «да/нет» нет: кейсы читаются слева направо,
-/// средний стоит на оси (first_right = false).
+/// Канон: у ромба «да» (первая ветка) — влево, «нет» — вправо: ветви
+/// читаются слева направо в порядке кода. У switch «да/нет» нет: кейсы
+/// тоже читаются слева направо, средний стоит на оси (first_right =
+/// false).
 fn plan_slots(n: usize, first_right: bool) -> Vec<(usize, Side, usize)> {
     let mut out = Vec::with_capacity(n);
     for j in 0..n {
@@ -101,7 +102,7 @@ pub(super) fn pack_plan(
 }
 
 /// Одна непустая ветка (вторая пуста): колонка одна, по канону «да»
-/// справа, «нет» слева; пустая ветка — сквозной проход по стволу.
+/// слева, «нет» справа; пустая ветка — сквозной проход по стволу.
 pub(super) fn single_plan(
     bi: usize,
     ext: (f64, f64),
@@ -110,7 +111,7 @@ pub(super) fn single_plan(
     side_x: f64,
     tx0: f64,
 ) -> (Vec<(usize, Side, usize, f64)>, f64, f64) {
-    let side = if bi == 0 { Side::R } else { Side::L };
+    let side = if bi == 0 { Side::L } else { Side::R };
     if narrow {
         let sgn = if side == Side::R { 1.0 } else { -1.0 };
         return (vec![(bi, side, 0, tx0 + sgn * side_x)], side_x, side_x);
@@ -470,7 +471,7 @@ impl Ctx<'_> {
                 dw / 2.0,
                 self.st.colgap,
                 tx,
-                true,
+                false,
             )
         };
         let env = envl.max(envr);
@@ -528,7 +529,7 @@ impl Ctx<'_> {
         let stubs: Vec<(f64, f64, String)> = stub
             .iter()
             .map(|(i, lbl)| {
-                let sgn = if *i == 0 { 1.0 } else { -1.0 };
+                let sgn = if *i == 0 { -1.0 } else { 1.0 };
                 (tx + sgn * (dw / 2.0 + self.st.hgap), sgn, lbl.clone())
             })
             .collect();

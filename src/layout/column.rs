@@ -94,7 +94,7 @@ pub(super) fn extent_lr(sizes: &Sizes, st: &Style, colw: f64, items: &[Stmt]) ->
                         side_x,
                         st.colgap,
                         0.0,
-                        nd.switch_var.is_none(),
+                        false,
                     );
                     (envl, envr)
                 };
