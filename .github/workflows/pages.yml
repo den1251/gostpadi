@@ -23,6 +23,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # движок собирается из текущего main: закоммиченный docs/gostpadi.wasm
+      # отставал от кода, и сайт показывал старую раскладку
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Собрать wasm
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          cp target/wasm32-unknown-unknown/release/gostpadi.wasm docs/gostpadi.wasm
       # dist = docs/ целиком; вместо app.html — минифицированная копия
       - name: Собрать dist
         run: |
