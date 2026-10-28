@@ -6,6 +6,20 @@ pub mod gvn;
 use crate::ir::{Branch, TileKind};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Расширения входа, которые разбираются как код C/C++ (остальное — .gvn).
+/// Регистр не важен: на Windows и macOS `.CPP` встречается так же часто.
+pub fn is_code_path(path: &str) -> bool {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hxx" | "hh" | "h++"
+    )
+}
+
 /// Мягкая нормализация входа: включена в сборке с feature `autofix` и до
 /// первого `--no-fix`. Флаг, а не поле Options: он один на процесс и не
 /// должен прорастать через пайплайн, serve и wasm.
@@ -55,6 +69,34 @@ pub(crate) fn merge_case_aliases(branches: &mut Vec<Branch>) {
                 _ => format!("{label}, {next}"),
             };
             branches.remove(i);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_code_path;
+
+    /// C, C++ и заголовки — код; всё остальное, включая .gvn, — текст схемы.
+    #[test]
+    fn code_extensions() {
+        for p in [
+            "main.c",
+            "main.h",
+            "main.cpp",
+            "main.cc",
+            "main.cxx",
+            "main.c++",
+            "main.hpp",
+            "main.hxx",
+            "main.hh",
+            "main.h++",
+            "DIR/MAIN.CPP",
+        ] {
+            assert!(is_code_path(p), "{p} обязан быть кодом");
+        }
+        for p in ["scheme.gvn", "scheme.txt", "main", "main.rs", ".cpp"] {
+            assert!(!is_code_path(p), "{p} не код");
         }
     }
 }

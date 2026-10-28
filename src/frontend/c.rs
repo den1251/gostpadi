@@ -22,7 +22,7 @@ pub fn parse_c_to_nodes(src: &str, labels: &str) -> Result<Vec<Node>, ParseError
         cpp_options: Vec::new(),
         flavor: Flavor::StdC11,
     };
-    let ast = match parse_preprocessed(&config, prepared.clone()) {
+    let ast = match parse_preprocessed(&config, prepared.parse.clone()) {
         Ok(p) => p,
         Err(e) => return Err(syntax_err(e, src)),
     };
@@ -46,7 +46,8 @@ pub fn parse_c_to_nodes(src: &str, labels: &str) -> Result<Vec<Node>, ParseError
         _ => return Err(ParseError::new("тело main должно быть блоком в скобках")),
     };
     let ctx = Ctx {
-        src: &prepared,
+        src: &prepared.parse,
+        text: &prepared.text,
         orig: src,
         labels,
     };
@@ -103,7 +104,7 @@ pub fn c_to_gvn_functions_full(
         cpp_options: Vec::new(),
         flavor: Flavor::StdC11,
     };
-    let ast = match parse_preprocessed(&config, prepared.clone()) {
+    let ast = match parse_preprocessed(&config, prepared.parse.clone()) {
         Ok(p) => p,
         Err(e) => return Err(syntax_err(e, src)),
     };
@@ -115,13 +116,14 @@ pub fn c_to_gvn_functions_full(
         let Some(name) = declarator_name(&f.node.declarator) else {
             continue;
         };
-        let signature = declarator_signature(&f.node.declarator, &prepared)
+        let signature = declarator_signature(&f.node.declarator, &prepared.text)
             .unwrap_or_else(|| format!("{name}(void)"));
         let Statement::Compound(items) = &f.node.statement.node else {
             continue;
         };
         let ctx = Ctx {
-            src: &prepared,
+            src: &prepared.parse,
+            text: &prepared.text,
             orig: src,
             labels,
         };
@@ -236,8 +238,10 @@ fn pad(out: &mut String, depth: usize) {
 }
 
 struct Ctx<'a> {
-    /// подготовленный исходник (spans lang-c указывают в него)
+    /// подготовленный исходник для lang-c (spans указывают в него)
     src: &'a str,
+    /// тот же исходник без C++-масок: из него берётся текст подписей
+    text: &'a str,
     /// исходник для .locate у ошибок
     orig: &'a str,
     labels: &'a str,
@@ -290,7 +294,7 @@ impl<'a> Ctx<'a> {
 
     fn init_text(&self, init: &LangNode<Initializer>) -> String {
         match &init.node {
-            Initializer::Expression(e) => expr_text(self.src, e),
+            Initializer::Expression(e) => expr_text(self.text, e),
             Initializer::List(items) => {
                 let parts: Vec<String> = items
                     .iter()
@@ -308,7 +312,7 @@ impl<'a> Ctx<'a> {
             Statement::While(w) => {
                 let mut nd = Node::new(
                     NodeKind::Loop,
-                    shorten_calls(&expr_text(self.src, &w.node.expression)),
+                    shorten_calls(&expr_text(self.text, &w.node.expression)),
                 );
                 nd.loop_kind = Some(LoopKind::While);
                 nd.lang = self.labels.to_string();
@@ -318,7 +322,7 @@ impl<'a> Ctx<'a> {
             Statement::For(f) => {
                 let init = match &f.node.initializer.node {
                     ForInitializer::Empty | ForInitializer::StaticAssert(_) => String::new(),
-                    ForInitializer::Expression(e) => expr_text(self.src, e),
+                    ForInitializer::Expression(e) => expr_text(self.text, e),
                     ForInitializer::Declaration(d) => {
                         // тип счётчика в заголовке не нужен
                         d.node
@@ -341,13 +345,13 @@ impl<'a> Ctx<'a> {
                     .node
                     .condition
                     .as_ref()
-                    .map(|e| shorten_calls(&expr_text(self.src, e)))
+                    .map(|e| shorten_calls(&expr_text(self.text, e)))
                     .unwrap_or_default();
                 let step = f
                     .node
                     .step
                     .as_ref()
-                    .map(|e| expr_text(self.src, e))
+                    .map(|e| expr_text(self.text, e))
                     .unwrap_or_default();
                 let mut nd = Node::new(NodeKind::Loop, format!("{}; {}; {}", init, cond, step));
                 nd.loop_kind = Some(LoopKind::For);
@@ -362,7 +366,7 @@ impl<'a> Ctx<'a> {
                 // и без подписи он врал бы, что проверка идёт первой.
                 let mut nd = Node::new(
                     NodeKind::Loop,
-                    shorten_calls(&expr_text(self.src, &d.node.expression)),
+                    shorten_calls(&expr_text(self.text, &d.node.expression)),
                 );
                 nd.loop_kind = Some(LoopKind::DoWhile);
                 nd.lang = self.labels.to_string();
@@ -371,14 +375,14 @@ impl<'a> Ctx<'a> {
             }
             Statement::Goto(g) => Err(self.err("в коде goto — не поддерживается", g.span.start)),
             Statement::Return(e) => Ok(vec![Stmt::Return(match e {
-                Some(x) => format!("return {}", expr_text(self.src, x)),
+                Some(x) => format!("return {}", expr_text(self.text, x)),
                 None => "return".to_string(),
             })]),
             Statement::Break => Ok(vec![Stmt::Break]),
             Statement::Continue => Ok(vec![Stmt::Continue]),
             Statement::Compound(items) => self.items(items),
             Statement::Expression(Some(e)) => {
-                let text = expr_text(self.src, e);
+                let text = expr_text(self.text, e);
                 // маркер ручного переноса: prepare() свёл `// перенос`
                 // к вызову `__gsplit__ ()`, здесь он становится узлом
                 if text == MARKER_CALL {
@@ -408,7 +412,7 @@ impl<'a> Ctx<'a> {
             Label::Identifier(id) => {
                 let text = match &l.node.statement.node {
                     Statement::Expression(Some(e)) => {
-                        format!("{}: {}", id.node.name, expr_text(self.src, e))
+                        format!("{}: {}", id.node.name, expr_text(self.text, e))
                     }
                     Statement::Expression(None) => format!("{}:", id.node.name),
                     _ => return Err(self.err("метка перед блоком не поддерживается", l.span.start)),
@@ -430,7 +434,7 @@ impl<'a> Ctx<'a> {
             NodeKind::Decision,
             format!(
                 "if ({})",
-                shorten_calls(&expr_text(self.src, i.node.condition.as_ref()))
+                shorten_calls(&expr_text(self.text, i.node.condition.as_ref()))
             ),
         );
         nd.lang = self.labels.to_string();
@@ -456,7 +460,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn switch_node(&self, s: &LangNode<SwitchStatement>) -> Result<Node, ParseError> {
-        let var = expr_text(self.src, &s.node.expression);
+        let var = expr_text(self.text, &s.node.expression);
         let mut nd = Node::new(NodeKind::Decision, format!("switch ({})", var));
         nd.lang = self.labels.to_string();
         nd.switch_var = Some(var.clone());
@@ -511,7 +515,7 @@ impl<'a> Ctx<'a> {
                 Statement::Labeled(l) => {
                     let chained = match &l.node.label.node {
                         Label::Case(e) => {
-                            labs.push(format!("{} = {}", var, expr_text(self.src, e.as_ref())));
+                            labs.push(format!("{} = {}", var, expr_text(self.text, e.as_ref())));
                             true
                         }
                         Label::Default => {
@@ -687,6 +691,122 @@ fn strip_comments(src: &str) -> String {
     out
 }
 
+/// `namespace X { ... }` и `namespace X = Y;` — обёртка C++, у C её нет.
+/// Заголовок и парная `}` маскируются пробелами (переводы строк целы),
+/// содержимое остаётся на верхнем уровне: функции файла рисуются как обычно.
+fn strip_namespaces(src: &str) -> String {
+    let mut buf = src.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if !word_at(&buf, i, b"namespace") {
+            i += 1;
+            continue;
+        }
+        // `using namespace std;` — это директива, её снимает strip_using
+        if prev_token(&buf, i).is_some_and(|(s, e)| &buf[s..e] == b"using") {
+            i += "namespace".len();
+            continue;
+        }
+        let Some(end) = namespace_end(&buf, i) else {
+            i += "namespace".len();
+            continue;
+        };
+        if buf[end - 1] == b'{' {
+            if let Some(close) = matching_brace(&buf, end - 1) {
+                let from = if prev_token(&buf, i).is_some_and(|(s, e)| &buf[s..e] == b"inline") {
+                    prev_token(&buf, i).map_or(i, |(s, _)| s)
+                } else {
+                    i
+                };
+                mask_keep_newlines(&mut buf, from, end);
+                mask_keep_newlines(&mut buf, close, close + 1);
+                // `};` после namespace: пустое объявление C не понимает
+                let mut semi = close + 1;
+                while buf
+                    .get(semi)
+                    .is_some_and(|b| matches!(*b, b' ' | b'\t' | b'\r' | b'\n'))
+                {
+                    semi += 1;
+                }
+                if buf.get(semi) == Some(&b';') {
+                    mask_keep_newlines(&mut buf, semi, semi + 1);
+                }
+                // внутрь блока: там могут быть вложенные namespace
+                i = end;
+                continue;
+            }
+        } else {
+            mask_keep_newlines(&mut buf, i, end);
+            i = end;
+            continue;
+        }
+        i += "namespace".len();
+    }
+    from_bytes(buf, src)
+}
+
+/// Конец заголовка namespace: позиция после `{` или после `;` алиаса.
+fn namespace_end(buf: &[u8], start: usize) -> Option<usize> {
+    let mut j = skip_ws_all(buf, start + "namespace".len());
+    loop {
+        if buf.get(j) == Some(&b'{') {
+            return Some(j + 1);
+        }
+        if buf.get(j) == Some(&b'=') {
+            let mut k = j + 1;
+            while k < buf.len() {
+                if matches!(buf[k], b'"' | b'\'') {
+                    k = skip_literal(buf, k);
+                    continue;
+                }
+                if buf[k] == b';' {
+                    return Some(k + 1);
+                }
+                k += 1;
+            }
+            return None;
+        }
+        j = ident_end(buf, j)?;
+        let k = skip_ws_all(buf, j);
+        if buf.get(k..k + 2) == Some(b"::") {
+            j = skip_ws_all(buf, k + 2);
+        } else {
+            j = k;
+        }
+    }
+}
+
+fn skip_ws_all(buf: &[u8], mut i: usize) -> usize {
+    while buf
+        .get(i)
+        .is_some_and(|b| matches!(*b, b' ' | b'\t' | b'\r' | b'\n'))
+    {
+        i += 1;
+    }
+    i
+}
+
+fn mask_keep_newlines(buf: &mut [u8], from: usize, to: usize) {
+    for b in &mut buf[from..to] {
+        if !matches!(*b, b'\n' | b'\r') {
+            *b = b' ';
+        }
+    }
+}
+
+/// Подготовленный вход: `parse` читает lang-c, `text` — тот же текст для
+/// подписей блоков. Длины совпадают байт в байт: C++-обвязка маскируется
+/// пробелами, поэтому span'ы AST годятся для обоих срезов. В `text`
+/// остаются `&`, `string`, `auto` и `using`; `std::` в подписи опускается.
+struct Prepared {
+    parse: String,
+    text: String,
+}
+
 /// pyconverter-подготовка: снять комментарии и строки препроцессора.
 /// Директивы заменяются пустыми строками — нумерация строк сохраняется.
 ///
@@ -699,11 +819,11 @@ fn strip_comments(src: &str) -> String {
 /// это закомментированный код, рисовать его нельзя. Ветки `#ifdef /
 /// #ifndef / #if 1` считаются включёнными: заголовочные файлы студент
 /// underscope подключает осознанно.
-fn prepare(src: &str) -> String {
+fn prepare(src: &str) -> Prepared {
     prepare_impl(src, crate::frontend::autofix_enabled())
 }
 
-fn prepare_impl(src: &str, autofix: bool) -> String {
+fn prepare_impl(src: &str, autofix: bool) -> Prepared {
     #[cfg(feature = "autofix")]
     let src = if autofix {
         crate::frontend::fix::normalize(src)
@@ -724,20 +844,24 @@ fn prepare_impl(src: &str, autofix: bool) -> String {
     // 2) снять комментарии — по ВСЕМУ тексту: /* */ живёт через
     //    построчно строки, и на перловой строке его не видно
     let stripped = strip_comments(&marked);
+    // 2.5) namespace X { ... } — обёртка C++; функции внутри остаются
+    //      обычными функциями файла
+    let stripped = strip_namespaces(&stripped);
     // 3) вырезать выключенные ветки и сами директивы
     let no_comments: Vec<String> = stripped.split('\n').map(str::to_string).collect();
     // стек условий препроцессора: (ветка_живая, была_ли_else)
     let mut cond: Vec<(bool, bool)> = Vec::new();
     let disabled = |cond: &Vec<(bool, bool)>| cond.iter().any(|(on, _)| !on);
-    let mut out = Vec::with_capacity(no_comments.len());
+    let mut out: Vec<(String, String)> = Vec::with_capacity(no_comments.len());
     for line in &no_comments {
         let t = line.trim_start();
         let Some(rest) = t.strip_prefix('#') else {
-            out.push(if disabled(&cond) {
-                String::new()
+            if disabled(&cond) {
+                out.push((String::new(), String::new()));
             } else {
-                expand_stdbool(line)
-            });
+                let text = expand_stdbool(line);
+                out.push((normalize_cpp(&text), mask_std_for_text(&text)));
+            }
             continue;
         };
         let rest = rest.trim();
@@ -780,9 +904,663 @@ fn prepare_impl(src: &str, autofix: bool) -> String {
             }
             _ => {}
         }
-        out.push(String::new());
+        out.push((String::new(), String::new()));
     }
-    out.join("\n")
+    Prepared {
+        parse: out
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        text: out
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+/// C++-обвязка, которую грамматика C не понимает. Все замены — пробелы
+/// или `&`→`*` той же длины: смещения и номера строк остаются координатами
+/// исходника. Строковые и символьные литералы не трогаем.
+fn normalize_cpp(line: &str) -> String {
+    if line.trim_start().starts_with('#') {
+        return line.to_string();
+    }
+    let line = strip_using(line);
+    let line = rewrite_constexpr(&line);
+    let line = rewrite_empty_return(&line);
+    let line = replace_std_types(&line);
+    let line = rewrite_casts(&line);
+    let line = replace_scope(&line);
+    let line = rewrite_auto(&line);
+    let line = rewrite_string_type(&line);
+    let line = rewrite_brace_init(&line);
+    rewrite_refs(&line)
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn word_at(buf: &[u8], i: usize, word: &[u8]) -> bool {
+    buf.get(i..i + word.len()) == Some(word)
+        && (i == 0 || !is_ident_byte(buf[i - 1]))
+        && buf.get(i + word.len()).is_none_or(|b| !is_ident_byte(*b))
+}
+
+fn skip_spaces(buf: &[u8], mut i: usize) -> usize {
+    while buf.get(i).is_some_and(|b| *b == b' ' || *b == b'\t') {
+        i += 1;
+    }
+    i
+}
+
+fn ident_end(buf: &[u8], i: usize) -> Option<usize> {
+    let first = *buf.get(i)?;
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return None;
+    }
+    let mut j = i + 1;
+    while buf.get(j).is_some_and(|b| is_ident_byte(*b)) {
+        j += 1;
+    }
+    Some(j)
+}
+
+fn skip_literal(buf: &[u8], i: usize) -> usize {
+    let quote = buf[i];
+    let mut j = i + 1;
+    while j < buf.len() {
+        if buf[j] == b'\\' {
+            j += 2;
+            continue;
+        }
+        if buf[j] == quote {
+            return j + 1;
+        }
+        j += 1;
+    }
+    j
+}
+
+fn mask(buf: &mut [u8], from: usize, to: usize) {
+    for b in &mut buf[from..to] {
+        *b = b' ';
+    }
+}
+
+fn from_bytes(buf: Vec<u8>, fallback: &str) -> String {
+    String::from_utf8(buf).unwrap_or_else(|_| fallback.to_string())
+}
+
+/// `using namespace std;`, `using std::cout;` — директива компилятора,
+/// на схеме ей нечего изображать. Маска сохраняет длину строки.
+fn strip_using(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, b"using") {
+            if let Some(end) = using_end(&buf, i) {
+                mask(&mut buf, i, end);
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+fn using_end(buf: &[u8], start: usize) -> Option<usize> {
+    let mut j = skip_spaces(buf, start + "using".len());
+    if word_at(buf, j, b"namespace") {
+        j = skip_spaces(buf, j + "namespace".len());
+    }
+    if buf.get(j..j + 2) == Some(b"::") {
+        j = skip_spaces(buf, j + 2);
+    }
+    j = ident_end(buf, j)?;
+    loop {
+        let k = skip_spaces(buf, j);
+        if buf.get(k..k + 2) == Some(b"::") {
+            let m = skip_spaces(buf, k + 2);
+            j = ident_end(buf, m)?;
+        } else {
+            j = k;
+            break;
+        }
+    }
+    (buf.get(j) == Some(&b';')).then_some(j + 1)
+}
+
+/// `constexpr` — квалификатор C++, для C это тот же `const`. Длина
+/// сохраняется: `const` + четыре пробела.
+fn rewrite_constexpr(line: &str) -> String {
+    replace_word(line, b"constexpr", b"const    ")
+}
+
+/// `return {};` — value-initialization C++. Пустые скобки заменяются
+/// нулём: `return 0 ;`. Содержимое `{...}` не трогаем.
+fn rewrite_empty_return(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, b"return") {
+            let open = skip_spaces(&buf, i + "return".len());
+            if buf.get(open) == Some(&b'{') {
+                let close = skip_spaces(&buf, open + 1);
+                if buf.get(close) == Some(&b'}') {
+                    buf[open] = b'0';
+                    mask(&mut buf, open + 1, close + 1);
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+/// Замена слова вне литералов; длина replacement должна совпадать с word.
+fn replace_word(line: &str, word: &[u8], replacement: &[u8]) -> String {
+    debug_assert_eq!(word.len(), replacement.len());
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, word) {
+            buf[i..i + word.len()].copy_from_slice(replacement);
+            i += word.len();
+            continue;
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+/// В подписи `std::` не нужен: `cout`, `sqrt`, `string` читаются и без
+/// пространства имён. Маска той же длины, чтобы span'ы совпадали с разбором.
+fn mask_std_for_text(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, b"std") && buf.get(i + 3..i + 5) == Some(b"::") {
+            let from = if i >= 2 && buf.get(i - 2..i) == Some(b"::") {
+                i - 2
+            } else {
+                i
+            };
+            mask(&mut buf, from, i + 5);
+            i += 5;
+            continue;
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+/// `std::string`, `std::size_t` и потоки — типы C++ без C-аналога.
+/// Заменяются на `int` с добивкой пробелами: длина та же, подпись
+/// блока остаётся исходной (`std::string s`), а lang-c видит `int s`.
+fn replace_std_types(line: &str) -> String {
+    const TYPES: [&[u8]; 9] = [
+        b"std::stringstream",
+        b"std::string_view",
+        b"std::ifstream",
+        b"std::ofstream",
+        b"std::wstring",
+        b"std::istream",
+        b"std::ostream",
+        b"std::string",
+        b"std::size_t",
+    ];
+    let mut line = line.to_string();
+    for ty in TYPES {
+        line = replace_exact(&line, ty, b"int");
+    }
+    line
+}
+
+/// Замена точной последовательности вне литералов с добивкой пробелами
+/// до её длины: `std::string` -> `int        `.
+fn replace_exact(line: &str, needle: &[u8], replacement: &[u8]) -> String {
+    debug_assert!(needle.len() >= replacement.len());
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, needle) {
+            buf[i..i + replacement.len()].copy_from_slice(replacement);
+            mask(&mut buf, i + replacement.len(), i + needle.len());
+            i += needle.len();
+            continue;
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+/// `static_cast<T>(x)` — C++-каст. Для разбора `(T)(x)`:
+/// `static_cast` маскируется в `(`, `<` и `>` — в пробел и `)`.
+/// Спан выражения начинается на `(`, поэтому подпись остаётся исходной.
+fn rewrite_casts(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        let Some(kind) = cast_word_at(&buf, i) else {
+            i += 1;
+            continue;
+        };
+        let open = skip_spaces(&buf, i + kind);
+        if buf.get(open) != Some(&b'<') {
+            i += kind;
+            continue;
+        }
+        let Some(close) = matching_angle(&buf, open) else {
+            i += kind;
+            continue;
+        };
+        buf[i] = b'(';
+        mask(&mut buf, i + 1, i + kind);
+        buf[open] = b' ';
+        buf[close] = b')';
+        i = close + 1;
+    }
+    from_bytes(buf, line)
+}
+
+fn cast_word_at(buf: &[u8], i: usize) -> Option<usize> {
+    for word in [
+        b"static_cast".as_slice(),
+        b"reinterpret_cast",
+        b"const_cast",
+        b"dynamic_cast",
+    ] {
+        if word_at(buf, i, word) {
+            return Some(word.len());
+        }
+    }
+    None
+}
+
+fn matching_angle(buf: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(buf, i);
+            continue;
+        }
+        match buf[i] {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `cpplabs::readNumber` — `::` в C нет. Заменяем на `__` той же длины:
+/// имя становится обычным идентификатором, а подпись остаётся с `::`
+/// (span начинается на первом имени). `std::` в подписи уже замаскирован.
+fn replace_scope(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if buf.get(i..i + 2) == Some(b"::") {
+            buf[i] = b'_';
+            buf[i + 1] = b'_';
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+/// `auto x = ...` — тип выводится компилятором, для разбора годится `int`.
+/// `auto` перед `[` (structured binding) и `auto int` (storage class C)
+/// не трогаем.
+fn rewrite_auto(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, b"auto") {
+            let next = skip_spaces(&buf, i + "auto".len());
+            let starts_type = buf.get(next).is_some_and(|b| {
+                b.is_ascii_alphabetic() || *b == b'_' || matches!(*b, b'*' | b'&')
+            });
+            if starts_type && !starts_c_type(&buf, next) {
+                buf[i..i + "auto".len()].copy_from_slice(b"int ");
+                i += "auto".len();
+                continue;
+            }
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+fn starts_c_type(buf: &[u8], i: usize) -> bool {
+    const WORDS: [&[u8]; 14] = [
+        b"void",
+        b"char",
+        b"short",
+        b"int",
+        b"long",
+        b"float",
+        b"double",
+        b"signed",
+        b"unsigned",
+        b"_Bool",
+        b"bool",
+        b"const",
+        b"volatile",
+        b"struct",
+    ];
+    WORDS.iter().any(|w| word_at(buf, i, w))
+}
+
+/// `string s` (после `using namespace std;`) — тип C++, для разбора `int`.
+/// Подпись остаётся `string s`: span начинается на том же месте.
+fn rewrite_string_type(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if word_at(&buf, i, b"string") {
+            let next = skip_spaces(&buf, i + "string".len());
+            let is_type = buf.get(next).is_some_and(|b| {
+                b.is_ascii_alphabetic() || *b == b'_' || matches!(*b, b'*' | b'&')
+            });
+            if is_type {
+                buf[i..i + "string".len()].copy_from_slice(b"int   ");
+                i += "string".len();
+                continue;
+            }
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+/// `double x{};` и `double y {expr};` — инициализация C++.
+/// Пустые скобки без `=` убираются (объявление без значения), с `=` —
+/// дают `0`; `{expr}` становится `= expr` (или `(expr)` после `=`).
+fn rewrite_brace_init(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if buf[i] != b'{' {
+            i += 1;
+            continue;
+        }
+        let Some(close) = matching_brace(&buf, i) else {
+            i += 1;
+            continue;
+        };
+        let after = skip_spaces(&buf, close + 1);
+        let terminated = after >= buf.len() || matches!(buf[after], b';' | b',' | b')');
+        if !terminated || !brace_is_initializer(&buf, i) {
+            i = close + 1;
+            continue;
+        }
+        let content = &buf[i + 1..close];
+        let empty = content.iter().all(|b| matches!(*b, b' ' | b'\t'));
+        // `{1, 2}` — список, `{ stmt; }` — блок: и то и другое не `{expr}`
+        if has_top_level_comma(content) || has_semicolon(content) {
+            i = close + 1;
+            continue;
+        }
+        let after_eq = prev_token(&buf, i).is_some_and(|(s, e)| &buf[s..e] == b"=");
+        if empty {
+            if after_eq {
+                buf[i] = b'0';
+                mask(&mut buf, i + 1, close + 1);
+            } else {
+                mask(&mut buf, i, close + 1);
+            }
+        } else if after_eq {
+            buf[i] = b'(';
+            buf[close] = b')';
+        } else {
+            buf[i] = b'=';
+            // `;` вместо `}`: AST-спан инициализатора кончается перед
+            // терминатором, поэтому в подпись не попадает лишняя скобка.
+            // Для `,`/`)` терминатор оставляем пробелом — там `;` нельзя.
+            buf[close] = if buf[after] == b';' { b';' } else { b' ' };
+        }
+        i = close + 1;
+    }
+    from_bytes(buf, line)
+}
+
+fn matching_brace(buf: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(buf, i);
+            continue;
+        }
+        match buf[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn brace_is_initializer(buf: &[u8], open: usize) -> bool {
+    let Some((start, end)) = prev_token(buf, open) else {
+        return false;
+    };
+    let tok = &buf[start..end];
+    if tok == b"=" {
+        return true;
+    }
+    if tok.len() == 1 && !is_ident_byte(tok[0]) {
+        return false;
+    }
+    if matches!(
+        tok,
+        b"return"
+            | b"else"
+            | b"do"
+            | b"try"
+            | b"switch"
+            | b"case"
+            | b"struct"
+            | b"class"
+            | b"union"
+            | b"enum"
+            | b"namespace"
+    ) {
+        return false;
+    }
+    !prev_token(buf, start).is_some_and(|(ps, pe)| {
+        matches!(
+            &buf[ps..pe],
+            b"struct" | b"class" | b"union" | b"enum" | b"namespace"
+        )
+    })
+}
+
+fn has_top_level_comma(content: &[u8]) -> bool {
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < content.len() {
+        if matches!(content[i], b'"' | b'\'') {
+            i = skip_literal(content, i);
+            continue;
+        }
+        match content[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+fn has_semicolon(content: &[u8]) -> bool {
+    let mut i = 0;
+    while i < content.len() {
+        if matches!(content[i], b'"' | b'\'') {
+            i = skip_literal(content, i);
+            continue;
+        }
+        if content[i] == b';' {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Ссылка `int &a` — не C. В объявлении меняем `&` на `*` (та же длина):
+/// для схемы это указатель, для разбора — законный декларатор. Выражения
+/// (`a & b`, `&x` в вызове) не трогаем: там перед `&` не тип.
+fn rewrite_refs(line: &str) -> String {
+    let mut buf = line.as_bytes().to_vec();
+    let mut i = 0;
+    while i < buf.len() {
+        if matches!(buf[i], b'"' | b'\'') {
+            i = skip_literal(&buf, i);
+            continue;
+        }
+        if buf[i] == b'&' {
+            if buf.get(i + 1) == Some(&b'&') {
+                i += 2;
+                continue;
+            }
+            if is_ref_declarator(&buf, i) {
+                buf[i] = b'*';
+            }
+        }
+        i += 1;
+    }
+    from_bytes(buf, line)
+}
+
+fn is_ref_declarator(buf: &[u8], amp: usize) -> bool {
+    let after = skip_spaces(buf, amp + 1);
+    let Some(end) = ident_end(buf, after) else {
+        return false;
+    };
+    let term = skip_spaces(buf, end);
+    let declarator_end = term >= buf.len()
+        || matches!(
+            buf[term],
+            b'=' | b',' | b';' | b')' | b']' | b'[' | b'{' | b':'
+        );
+    declarator_end && type_before(buf, amp)
+}
+
+fn prev_token(buf: &[u8], pos: usize) -> Option<(usize, usize)> {
+    let mut j = pos;
+    while j > 0 && matches!(buf[j - 1], b' ' | b'\t') {
+        j -= 1;
+    }
+    if j == 0 {
+        return None;
+    }
+    let end = j;
+    if is_ident_byte(buf[j - 1]) {
+        while j > 0 && is_ident_byte(buf[j - 1]) {
+            j -= 1;
+        }
+    } else {
+        j -= 1;
+    }
+    Some((j, end))
+}
+
+fn type_before(buf: &[u8], pos: usize) -> bool {
+    let mut pos = pos;
+    loop {
+        let Some((start, end)) = prev_token(buf, pos) else {
+            return false;
+        };
+        let tok = &buf[start..end];
+        if matches!(tok, b"*" | b"const" | b"volatile") {
+            pos = start;
+            continue;
+        }
+        if matches!(
+            tok,
+            b"void"
+                | b"char"
+                | b"short"
+                | b"int"
+                | b"long"
+                | b"float"
+                | b"double"
+                | b"signed"
+                | b"unsigned"
+                | b"_Bool"
+                | b"bool"
+                | b"string"
+        ) {
+            return true;
+        }
+        return prev_token(buf, start)
+            .is_some_and(|(ps, pe)| matches!(&buf[ps..pe], b"struct" | b"union" | b"enum"));
+    }
 }
 
 /// `// перенос` -> `__gsplit__ ();` на той же позиции строки: маркер
@@ -1201,7 +1979,7 @@ mod tests {
             "    // переносить\n",
             "}\n",
         );
-        let p = prepare(src);
+        let p = prepare(src).parse;
         assert_eq!(p.matches("__gsplit__ ();").count(), 2, "{p}");
         assert!(
             p.contains("    int a = 1; __gsplit__ ();"),
@@ -1666,7 +2444,7 @@ mod tests {
             nodes.iter().map(|n| &n.text).collect::<Vec<_>>()
         );
         // нумерация строк сохраняется: продолжения уходят пустыми строками
-        let prepared = prepare(src);
+        let prepared = prepare(src).parse;
         assert_eq!(prepared.lines().count(), src.lines().count());
     }
 
@@ -1760,7 +2538,7 @@ mod tests {
     fn strict_mode_keeps_cr_only_file_unparseable() {
         let src = "int main(void)\r{\r// сумма\rint a = 1;\rprintf(\"%d\", a);\rreturn 0;\r}\r";
         assert!(parse_c_to_nodes(src, "en").is_ok(), "фикс должен спасти");
-        let strict = prepare_impl(src, false);
+        let strict = prepare_impl(src, false).parse;
         assert!(strict.contains('\r'), "строгий режим не должен трогать CR");
         let config = Config {
             cpp_command: String::new(),
@@ -1771,5 +2549,351 @@ mod tests {
             parse_preprocessed(&config, strict).is_err(),
             "строгий разбор CR-только файла обязан падать"
         );
+    }
+
+    /// `using namespace std;` и `std::` — не C. Маскируются пробелами:
+    /// lang-c видит чистый C, а подпись блока остаётся исходной.
+    #[test]
+    fn cpp_using_and_scope_are_masked() {
+        let src = concat!(
+            "#include <iostream>\n",
+            "using namespace std;\n",
+            "using std::endl;\n",
+            "int main() {\n",
+            "    std::cout << \"hi\" << endl;\n",
+            "    return 0;\n",
+            "}\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("using"), "{}", p.parse);
+        assert!(!p.parse.contains("std::"), "{}", p.parse);
+        assert!(
+            p.text.contains("cout << \"hi\" << endl"),
+            "подпись без std::: {}",
+            p.text
+        );
+        assert!(!p.text.contains("std::"), "{}", p.text);
+        assert_eq!(p.parse.lines().count(), src.lines().count());
+        assert_eq!(p.parse.len(), p.text.len(), "span'ы общие для двух срезов");
+    }
+
+    /// `using namespace std::chrono;` — тоже using-директива, а не код.
+    #[test]
+    fn cpp_using_qualified_namespace_is_masked() {
+        let p = prepare("using namespace std::chrono;\nint main() { return 0; }");
+        assert!(!p.parse.contains("using"), "{}", p.parse);
+    }
+
+    /// Ссылка в объявлении: для разбора `*`, для схемы — исходный `&`.
+    #[test]
+    fn cpp_references_parse_as_pointers() {
+        let src = concat!(
+            "void swap(int &a, int &b) {\n",
+            "    int t = a;\n",
+            "    a = b;\n",
+            "    b = t;\n",
+            "}\n",
+            "int main() {\n",
+            "    int x = 1, y = 2;\n",
+            "    swap(x, y);\n",
+            "    return 0;\n",
+            "}\n",
+        );
+        let p = prepare(src);
+        assert!(p.parse.contains("int *a, int *b"), "{}", p.parse);
+        assert!(p.text.contains("int &a, int &b"), "{}", p.text);
+        let schemes = c_to_gvn_functions_full(src, "en").expect("C++ с ссылками");
+        let swap = schemes.iter().find(|(n, _, _)| n == "swap").unwrap();
+        assert_eq!(swap.1, "swap(int &a, int &b)");
+    }
+
+    /// `&` в выражении и адрес переменной — не ссылки: их трогать нельзя.
+    #[test]
+    fn cpp_bitwise_and_and_address_of_are_kept() {
+        let src = concat!(
+            "int main() {\n",
+            "    int a = 6, b = 3;\n",
+            "    int c = a & b;\n",
+            "    int *p = &a;\n",
+            "    printf(\"%d %d\", c, *p);\n",
+            "    return 0;\n",
+            "}\n",
+        );
+        let p = prepare(src);
+        assert!(p.parse.contains("a & b"), "{}", p.parse);
+        assert!(p.parse.contains("&a"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// `string` — не тип C: для разбора `int`, подпись остаётся `string s`.
+    #[test]
+    fn cpp_string_type_is_replaced_for_parser() {
+        let src = "int main() {\n    string s = \"hi\";\n    std::cout << s;\n    return 0;\n}\n";
+        let p = prepare(src);
+        assert!(p.parse.contains("int    s = \"hi\""), "{}", p.parse);
+        assert!(p.text.contains("string s = \"hi\""), "{}", p.text);
+        assert_eq!(p.parse.len(), p.text.len());
+        let nodes = parse_ok(src);
+        let tiles = texts(&nodes, NodeKind::Act);
+        assert!(tiles.iter().any(|t| t == "s = \"hi\""), "{tiles:?}");
+        let io = texts(&nodes, NodeKind::Io);
+        assert!(io.iter().any(|t| t == "cout << s"), "{io:?}");
+    }
+
+    /// `string` как обычный идентификатор (`string = 1`) — не тип.
+    #[test]
+    fn cpp_string_variable_is_kept() {
+        let p = prepare("int main() { int string = 1; printf(\"%d\", string); }");
+        assert!(p.parse.contains("int string = 1"), "{}", p.parse);
+    }
+
+    /// `cpplabs::readNumber` — `::` в C нет; для разбора `__`, подпись
+    /// остаётся с `::` (span начинается на первом имени).
+    #[test]
+    fn cpp_scope_is_replaced_for_parser() {
+        let src = "int main() { int n = cpplabs::readNumber(\"n: \"); printf(\"%d\", n); }";
+        let p = prepare(src);
+        assert!(p.parse.contains("cpplabs__readNumber"), "{}", p.parse);
+        assert!(p.text.contains("cpplabs::readNumber"), "{}", p.text);
+        parse_ok(src);
+    }
+
+    /// `auto x = ...` — для разбора `int`; `auto [a, b]` не трогаем.
+    #[test]
+    fn cpp_auto_is_replaced() {
+        let p = prepare("int main() { auto x = 1; auto& r = x; printf(\"%d\", r); }");
+        assert!(p.parse.contains("int  x = 1"), "{}", p.parse);
+        assert!(p.parse.contains("int * r"), "{}", p.parse);
+        assert!(
+            prepare("int main() { auto [a, b] = f(); }")
+                .parse
+                .contains("auto [a, b]"),
+            "structured binding не трогаем"
+        );
+    }
+
+    /// `{}` и `{expr}` в объявлениях — C++11; для разбора `= 0`/`= expr`.
+    #[test]
+    fn cpp_brace_initializers() {
+        let p = prepare(concat!(
+            "int main() {\n",
+            "    double a{};\n",
+            "    bool b = {};\n",
+            "    double c{1.5};\n",
+            "    int d{foo(1, 2)};\n",
+            "    printf(\"%f %d %f %d\", a, b, c, d);\n",
+            "}\n",
+        ));
+        assert!(p.parse.contains("double a  ;"), "{}", p.parse);
+        assert!(p.parse.contains("_Bool b = 0 ;"), "{}", p.parse);
+        assert!(p.parse.contains("double c=1.5;;"), "{}", p.parse);
+        assert!(p.parse.contains("int d=foo(1, 2);;"), "{}", p.parse);
+    }
+
+    /// `std::vector` — шаблон, вне поддержки: остаётся честная ошибка,
+    /// а не молчаливая кривая схема.
+    #[test]
+    fn cpp_stl_template_is_not_silently_mangled() {
+        assert!(parse_c_to_nodes("int main() { std::vector<int> v; return 0; }", "en").is_err());
+    }
+
+    /// `namespace X { ... }` — обёртка: функции внутри становятся
+    /// функциями файла, `X::f` для разбора — обычное имя.
+    #[test]
+    fn cpp_namespace_wrapper_is_stripped() {
+        let src = concat!(
+            "namespace lab {\n",
+            "int add(int a, int b) { int s = a + b; return s; }\n",
+            "}\n",
+            "int main() { printf(\"%d\", lab::add(1, 2)); return 0; }\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("namespace"), "{}", p.parse);
+        assert_eq!(p.parse.lines().count(), src.lines().count());
+        let schemes = c_to_gvn_functions_full(src, "en").expect("namespace-обёртка");
+        assert!(schemes.iter().any(|(n, _, _)| n == "add"), "{schemes:?}");
+        parse_ok(src);
+    }
+
+    /// `namespace fs = std::filesystem;` — алиас, тоже обёртка.
+    #[test]
+    fn cpp_namespace_alias_is_stripped() {
+        let p = prepare("namespace fs = std::filesystem;\nint main() { return 0; }");
+        assert!(!p.parse.contains("namespace"), "{}", p.parse);
+        assert!(!p.parse.contains("std::"), "{}", p.parse);
+    }
+
+    /// `static_cast<T>(x)` — для разбора `(T)(x)`, подпись исходная.
+    #[test]
+    fn cpp_static_cast_is_rewritten() {
+        let src = "int main() { double x = 1.5; int n = static_cast<int>(x); printf(\"%d\", n); }";
+        let p = prepare(src);
+        assert!(!p.parse.contains("static_cast"), "{}", p.parse);
+        assert!(p.text.contains("static_cast<int>(x)"), "{}", p.text);
+        parse_ok(src);
+    }
+
+    /// Остальные C++-касты и `std::string` внутри каста.
+    #[test]
+    fn cpp_other_casts_are_rewritten() {
+        let src = concat!(
+            "int main() {\n",
+            "    long long n = 1;\n",
+            "    char *p = reinterpret_cast<char *>(n);\n",
+            "    string s = static_cast<std::string>(p);\n",
+            "    printf(\"%s %p\", s, (void *)p);\n",
+            "    return 0;\n",
+            "}\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("reinterpret_cast"), "{}", p.parse);
+        assert!(!p.parse.contains("static_cast"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// `using ::std::cout;` — ведущий `::` в using-декларации.
+    #[test]
+    fn cpp_using_leading_scope_is_masked() {
+        let p = prepare("using ::std::cout;\nint main() { cout << 1; }");
+        assert!(!p.parse.contains("using"), "{}", p.parse);
+    }
+
+    /// `auto int x` — storage class C, а не вывод типа: не трогаем.
+    #[test]
+    fn cpp_auto_storage_class_is_kept() {
+        let p = prepare("int main() { auto int x = 1; printf(\"%d\", x); }");
+        assert!(p.parse.contains("auto int x"), "{}", p.parse);
+    }
+
+    /// Блочные `{}` и списки инициализации не принимаются за `{expr}`.
+    #[test]
+    fn cpp_block_braces_are_not_initializers() {
+        let src = concat!(
+            "struct P { int x; };\n",
+            "enum E { A };\n",
+            "int main() {\n",
+            "    int a[] = {1, 2};\n",
+            "    if (a[0]) { printf(\"x\"); } else { printf(\"y\"); }\n",
+            "    return 0;\n",
+            "}\n",
+        );
+        let p = prepare(src);
+        assert!(p.parse.contains("int a[] = {1, 2}"), "{}", p.parse);
+        assert!(p.parse.contains("if (a[0]) {"), "{}", p.parse);
+        assert!(p.parse.contains("struct P { int x; }"), "{}", p.parse);
+        assert!(p.parse.contains("enum E { A }"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// `std::size_t` и потоки — типы без C-аналога.
+    #[test]
+    fn cpp_std_scalar_and_stream_types() {
+        let p = prepare(
+            "int main() { std::size_t n = 0; std::istream& in = std::cin; printf(\"%zu\", n); }",
+        );
+        assert!(!p.parse.contains("std::size_t"), "{}", p.parse);
+        assert!(!p.parse.contains("std::istream"), "{}", p.parse);
+        assert!(!p.parse.contains("std::cin"), "{}", p.parse);
+    }
+
+    /// `namespace a::b` и `inline namespace` — тоже обёртки.
+    #[test]
+    fn cpp_namespace_qualified_and_inline() {
+        let src = concat!(
+            "inline namespace lab {\n",
+            "int f() { return 1; }\n",
+            "}\n",
+            "namespace a::b {\n",
+            "int g() { return 2; }\n",
+            "}\n",
+            "int main() { printf(\"%d %d\", lab::f(), a::b::g()); return 0; }\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("namespace"), "{}", p.parse);
+        assert!(!p.parse.contains("inline"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// `namespace X` и `{` на разных строках — обычное форматирование.
+    #[test]
+    fn cpp_namespace_brace_on_next_line() {
+        let src = concat!(
+            "namespace lab\n",
+            "{\n",
+            "int f() { return 1; }\n",
+            "}\n",
+            "int main() { printf(\"%d\", lab::f()); return 0; }\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("namespace"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// `namespace X { ... };` — лишняя `;` после `}` тоже снимается.
+    #[test]
+    fn cpp_namespace_trailing_semicolon_is_stripped() {
+        let src = concat!(
+            "namespace lab {\n",
+            "int add(int a, int b) { int s = a + b; return s; }\n",
+            "};\n",
+            "int main() { printf(\"%d\", lab::add(1, 2)); return 0; }\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("namespace"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// Вложенный namespace: маскируются оба заголовка и обе `}`.
+    #[test]
+    fn cpp_nested_namespaces_are_stripped() {
+        let src = concat!(
+            "namespace a {\n",
+            "namespace b {\n",
+            "int f() { return 1; }\n",
+            "}\n",
+            "}\n",
+            "int main() { printf(\"%d\", a::b::f()); return 0; }\n",
+        );
+        let p = prepare(src);
+        assert!(!p.parse.contains("namespace"), "{}", p.parse);
+        parse_ok(src);
+    }
+
+    /// Строковые литералы неприкосновенны: внутри них нет ни using, ни std::.
+    #[test]
+    fn cpp_literals_are_untouched() {
+        let src = "int main() { printf(\"using namespace std; std::cout & int\"); }";
+        let p = prepare(src);
+        assert!(
+            p.parse.contains("using namespace std; std::cout & int"),
+            "{}",
+            p.parse
+        );
+    }
+
+    /// `using` — обычное имя в C, если за ним не директива.
+    #[test]
+    fn cpp_using_as_identifier_is_kept() {
+        let p = prepare("int main() { int using = 1; printf(\"%d\", using); }");
+        assert!(p.parse.contains("int using = 1"), "{}", p.parse);
+    }
+
+    /// `constexpr` и `return {};` — обычный C++ в лабораторных заготовках.
+    #[test]
+    fn cpp_constexpr_and_empty_return() {
+        let src = concat!(
+            "constexpr int N = 3;\n",
+            "int f(int x) {\n",
+            "    if (x > N) {\n",
+            "        return {};\n",
+            "    }\n",
+            "    return x;\n",
+            "}\n",
+            "int main() { printf(\"%d\", f(1)); return 0; }\n",
+        );
+        let p = prepare(src);
+        assert!(p.parse.contains("const     int N = 3;"), "{}", p.parse);
+        assert!(p.parse.contains("return 0 ;"), "{}", p.parse);
+        parse_ok(src);
     }
 }
