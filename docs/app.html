@@ -381,28 +381,17 @@
   .hintbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
   @media (max-width: 1080px) { #statusline .hints { display: none; } }
 
-  /* онбординг: того же лексикона, что и статус-строка */
-  .ph { display: grid; gap: 10px; justify-items: center; max-width: 440px; }
-  .ph .ph-br { color: rgba(253, 252, 252, .35); }
+  /* пустой экран: знак, одна строка, пример */
+  .ph { display: grid; gap: 6px; justify-items: center; max-width: 360px; }
+  .ph-mark { width: 44px; height: 44px; color: rgba(253, 252, 252, .22); margin-bottom: 6px; }
+  .ph-title { margin: 0; font-size: 15px; color: rgba(253, 252, 252, .82); }
+  .ph-sub { margin: 0 0 10px; font-size: 12.5px; color: rgba(253, 252, 252, .45); }
   .ph button { pointer-events: auto; }
-  .onboard {
-    width: min(100%, 380px); text-align: left; background: rgba(15, 0, 0, .45);
-    border: 1px solid var(--stage-line); border-radius: 6px; padding: 16px 18px;
+  /* на тёмной сцене .btn наследует тёмные токены — CTA должен быть светлым */
+  .ph .btn, .ph .btn.primary {
+    background: #fdfcfc; color: #1a0e0e; border-color: #fdfcfc; font-weight: 500;
   }
-  .onboard[hidden] { display: none; }
-  .onboard-steps {
-    margin: 0 0 14px; padding: 0; list-style: none; counter-reset: ob;
-    display: grid; gap: 10px; color: rgba(253, 252, 252, .82); font-size: 13.5px;
-  }
-  .onboard-steps li { counter-increment: ob; display: grid; grid-template-columns: 22px 1fr; gap: 9px; }
-  .onboard-steps li:before {
-    content: counter(ob); width: 22px; height: 22px; border-radius: 50%;
-    border: 1px solid var(--stage-line); display: flex; align-items: center;
-    justify-content: center; font-size: 11px; color: rgba(253, 252, 252, .65);
-  }
-  .onboard-steps b { color: #fdfcfc; font-weight: 600; font-size: 14px; }
-  .onboard .btn { width: 100%; }
-  .onboard:not([hidden]) + .ph-note { display: none; }
+  .ph .btn:hover, .ph .btn.primary:hover { background: #fff; border-color: #fff; color: #1a0e0e; }
 
   /* палитра команд ctrl+k */
   #palette { position: fixed; inset: 0; z-index: 70; background: rgba(15,0,0,.5); padding-top: 14vh; }
@@ -765,7 +754,6 @@
           </label>
         </div>
       </span>
-      <span class="hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> — перерисовать</span>
     </div>
   </section>
 
@@ -796,18 +784,13 @@
       <div id="stage"></div>
       <div id="placeholder">
         <div class="ph">
-          <div class="ph-br">[+]</div>
-          <div class="onboard" id="onboard" hidden>
-            <ol class="onboard-steps">
-              <li><span><b>вставь код</b> — C-файл в поле кода или перетащи его сюда</span></li>
-              <li><span><b>схема появится сама</b> — по ГОСТ, на листах А4</span></li>
-              <li><span><b>скачай</b> — SVG, PNG или draw.io</span></li>
-            </ol>
-            <button id="onboard-ok" class="btn primary" title="больше не показывать">понятно</button>
-          </div>
-          <div class="ph-note">вставь код C-файла — схема нарисуется сама<br>и перерисуется при вводе</div>
-          <div class="ph-br">[x]</div>
-          <button id="ph-ex" class="btn" data-ex="input" title="подставить готовую программу">вставить пример</button>
+          <svg class="ph-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="2" width="14" height="8" rx="4"/><path d="M16 10v4M16 14l8 8-8 8-8-8z"/>
+          </svg>
+          <p class="ph-title">Вставь C-код — схема появится сама</p>
+          <p class="ph-sub">или перетащи <span class="mono">.c</span> файл в окно</p>
+          <button id="ph-ex" class="btn primary" data-ex="input" title="подставить готовую программу">вставить пример</button>
         </div>
       </div>
       <button id="zoomcard" class="btn" hidden title="открыть во весь экран">⤢ во весь экран</button>
@@ -2968,11 +2951,7 @@ $("ph-ex").addEventListener("click", () => {
 
 /* Онбординг — один раз на браузер: дальше пустое состояние говорит
    делом, а не экскурсией. */
-if (!store.get("gostpadi.onboard")) $("onboard").hidden = false;
-$("onboard-ok").addEventListener("click", () => {
-  store.set("gostpadi.onboard", "1");
-  $("onboard").hidden = true;
-});
+
 
 /* Подсказки в статус-строке кликабельные: это те же команды, что по
    горячим клавишам, но их видно и можно нажать пальцем. */
@@ -3104,8 +3083,8 @@ int main(void) {
   if (matchMedia("(max-width: 1080px)").matches) switchTab("edit");
 })();
 
-/* гайд: первый визит — всегда; пустой редактор — обязательно */
-if ((!$("code").value.trim() && !files.length) || !store.get("gostpadi.helpSeen")) {
+/* гайд: один раз при первом визите — пустой редактор сам объясняет, что делать */
+if (!store.get("gostpadi.helpSeen")) {
   openGuide();
 }
 
