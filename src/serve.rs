@@ -14,6 +14,7 @@
 //! Пачечная семантика как у CLI: сбойный вход не роняет ответ —
 //! он попадает в «errors» (или «empty»), HTTP-статус остаётся 200.
 
+use gostpadi::frontend::InputKind;
 use gostpadi::pipeline::{self, Options};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -171,10 +172,11 @@ fn opts_from(q: &BTreeMap<String, String>) -> Options {
 
 /// Вход для одного HTTP-обращения: имя схемы синтетическое, язык берём
 /// из ?lang — детерминизм вместо гадания по содержимому.
-fn as_input(lang: &str, text: &str) -> Result<(String, String, bool), String> {
+fn as_input(lang: &str, text: &str) -> Result<(String, String, InputKind), String> {
     match lang {
-        "c" | "cpp" => Ok(("код.c".to_string(), text.to_owned(), true)),
-        "gvn" => Ok(("схема.gvn".to_string(), text.to_owned(), false)),
+        "c" => Ok(("код.c".to_string(), text.to_owned(), InputKind::C)),
+        "cpp" => Ok(("код.cpp".to_string(), text.to_owned(), InputKind::Cpp)),
+        "gvn" => Ok(("схема.gvn".to_string(), text.to_owned(), InputKind::Gvn)),
         other => Err(format!("lang={other}: только c, cpp и gvn")),
     }
 }
