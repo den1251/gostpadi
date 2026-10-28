@@ -399,8 +399,21 @@ impl Ctx<'_> {
                         tx - lw / 2.0
                     };
                     self.edge(&[(lane, hy), (hx, hy)], true);
+                    // подпись вдоль вертикали, С ВНУТРЕННЕЙ стороны:
+                    // снаружи она уходила за край листа (lane - half)
                     if !c.marked {
-                        self.rail_label(lane, right_side, hy, "continue");
+                        let half = "continue".chars().count() as f64 * self.st.char_w / 2.0;
+                        let x = if right_side {
+                            lane - self.st.label_exit_dx - half
+                        } else {
+                            lane + self.st.label_exit_dx + half
+                        };
+                        self.labels.push(Label {
+                            x,
+                            y: (by + hy) * 0.5,
+                            text: "continue".into(),
+                            ha: "center".into(),
+                        });
                     }
                     self.edge(&[(b.tx, b.y), (b.tx, yj), (tx, yj)], false);
                     if !b.marked {
