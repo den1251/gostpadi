@@ -195,11 +195,13 @@ section.ex{padding:4.5rem 0 0}
 footer{border-top:1px solid var(--line);padding:2rem 0;color:var(--faint);font:13px var(--mono)}
 footer .wrap{display:flex;flex-wrap:wrap;gap:.9rem;align-items:center}
 footer a{color:var(--muted)}
-.theme-toggle{font:600 14px var(--mono);color:var(--muted);background:none;
+.theme-toggle{color:var(--muted);background:none;display:inline-flex;align-items:center;justify-content:center;
   border:1px solid var(--line);border-radius:var(--r);width:30px;height:30px;cursor:pointer}
 .theme-toggle:hover{color:var(--ink);border-color:var(--line2)}
 
 
+.ico{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round}
 footer a:hover{color:var(--ink)}
 
 /* ---------- телефон ---------- */
@@ -240,7 +242,7 @@ footer a:hover{color:var(--ink)}
     <nav>
       <a class="tuck" href="docs/">Документация</a>
       <a class="tuck" href="https://github.com/sehaxe/gostpadi">GitHub</a>
-      <button id="theme" class="theme-toggle" type="button" aria-label="переключить тему">◐</button>
+      <button id="theme" class="theme-toggle" type="button" aria-label="переключить тему"><svg class="ico" aria-hidden="true" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.1"/><path d="M8 1.9a6.1 6.1 0 010 12.2z" fill="currentColor" stroke="none"/></svg></button>
       <a class="go" href="app.html">Приложение</a>
     </nav>
   </div>

@@ -205,6 +205,7 @@
   .btn {
     border: 1px solid var(--line2); background: var(--panel2); color: var(--ink);
     border-radius: 4px; padding: 6px 12px; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     transition: background-color var(--t-2) var(--e-out), border-color var(--t-2) var(--e-out),
       color var(--t-2) var(--e-out), opacity var(--t-2) var(--e-out), transform var(--t-1) var(--e-out);
   }
@@ -220,6 +221,15 @@
   .btn.primary:hover { background: var(--panel2); color: var(--ink); }
   .btn:disabled { opacity: .45; cursor: default; }
   .btn.icon { padding: 6px 9px; }
+  /* иконки: один штрих на весь интерфейс, цвет наследуется от текста */
+  .ico {
+    width: 16px; height: 16px; flex: none; display: block;
+    fill: none; stroke: currentColor; stroke-width: 1.6;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .dx-card .ic .ico { width: 18px; height: 18px; }
+  .g-zoom .ico { width: 10px; height: 10px; }
+  .dx-x, .dx-help { display: inline-flex; align-items: center; justify-content: center; }
   .tools {
     display: flex; gap: 4px; align-items: center;
   }
@@ -379,7 +389,8 @@
   .lbthumb svg{width:100%;height:100%;display:block}
   .lbthumb:hover{opacity:1}
   .lbthumb[aria-current="true"]{outline:2px solid var(--accent);outline-offset:1px;opacity:1}
-  #lbpager button{width:34px;height:34px;border-radius:4px;
+  #lbpager button{display:inline-flex;align-items:center;justify-content:center;
+    width:34px;height:34px;border-radius:4px;
     border:1px solid var(--stage-line);background:rgba(15,0,0,.72);color:#fdfcfc;
     font-size:18px;line-height:1;cursor:pointer}
   #lbpager button:disabled{opacity:.28;cursor:default}
@@ -439,7 +450,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   /* скачивание: одна панель, три формата, один крупный «Скачать» */
   .dx-btn { font-weight: 600; }
-  .dx-arrow { font-size: 14px; margin-right: 4px; }
   .dx-ov { position: fixed; inset: 0; z-index: 80; background: rgba(15,0,0,.5);
     display: flex; align-items: center; justify-content: center; padding: 20px; }
   .dx-ov[hidden] { display: none; }
@@ -724,7 +734,8 @@
   #tip {
     position: fixed; z-index: 90; pointer-events: none;
     max-width: 280px; padding: 5px 8px; border-radius: var(--r);
-    background: var(--ink); color: var(--bg);
+    /* как меню, а не как инверсия: на тёмном интерфейсе белая плашка бьёт по глазам */
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--line2);
     font: 12px/1.35 var(--mono);
     opacity: 0; transform: translateY(2px);
     transition: opacity var(--t-1) var(--e-out), transform var(--t-1) var(--e-out);
@@ -777,6 +788,22 @@
 </style>
 </head>
 <body data-mtab="edit">
+<svg id="icons" width="0" height="0" aria-hidden="true" focusable="false"
+     style="position:absolute;overflow:hidden">
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.4v9.2M3.4 8h9.2"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3.4 8h9.2"/></symbol>
+  <symbol id="i-help" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.1"/><path d="M6.2 6a1.9 1.9 0 013.7.9c0 1.1-1.9 1.3-1.9 2.5"/><path d="M8 11.6h.01"/></symbol>
+  <symbol id="i-contrast" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.1"/><path d="M8 1.9a6.1 6.1 0 010 12.2z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.4" cy="8" r="1.15" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.15" fill="currentColor" stroke="none"/><circle cx="12.6" cy="8" r="1.15" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M2.8 5.2h4.1M10.9 5.2h2.3M2.8 10.8h2.3M9.1 10.8h4.1"/><circle cx="8.9" cy="5.2" r="1.7"/><circle cx="7.1" cy="10.8" r="1.7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4.7 4.7l6.6 6.6M11.3 4.7l-6.6 6.6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.6v7.6M4.9 7.1L8 10.2l3.1-3.1M3 13.4h10"/></symbol>
+  <symbol id="i-left" viewBox="0 0 16 16"><path d="M9.9 3.8L5.7 8l4.2 4.2"/></symbol>
+  <symbol id="i-right" viewBox="0 0 16 16"><path d="M6.1 3.8L10.3 8l-4.2 4.2"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 16 16"><path d="M9.7 2.7h3.6v3.6M6.3 13.3H2.7V9.7M13.3 2.7L9.2 6.8M2.7 13.3l4.1-4.1"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M2.8 8h9.1M8.7 4.6L12.4 8l-3.7 3.4"/></symbol>
+  <symbol id="i-diamond" viewBox="0 0 16 16"><path d="M8 2.6l5.4 5.4L8 13.4 2.6 8z"/></symbol>
+</svg>
 <div id="loadbar" aria-hidden="true"></div>
 <a class="skip" href="#code">к редактору</a>
 <header class="top">
@@ -791,8 +818,8 @@
       <button id="vt-files" aria-pressed="true">Файлы</button>
       <button id="vt-editor" aria-pressed="true">Код</button>
     </span>
-    <button id="help" class="btn icon" aria-label="Как пользоваться" title="как пользоваться: 4 шага">?</button>
-    <button id="theme" class="btn icon" title="сменить тему">◐</button>
+    <button id="help" class="btn icon" aria-label="Как пользоваться" title="как пользоваться: 4 шага"><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg></button>
+    <button id="theme" class="btn icon" aria-label="сменить тему" title="сменить тему"><svg class="ico" aria-hidden="true"><use href="#i-contrast"/></svg></button>
     <a href="docs/" title="документация: опции, архитектура, устойчивость к ошибкам">Документация</a>
     <a href="https://github.com/sehaxe/gostpadi" title="исходники на GitHub">GitHub</a>
   </div>
@@ -801,7 +828,7 @@
 <main class="studio" id="app">
   <nav id="side" class="pane" aria-label="файлы">
     <div class="pane-title">Файлы<span class="spacer"></span>
-      <button id="add" class="btn icon" title="добавить файлы">+</button>
+      <button id="add" class="btn icon" aria-label="добавить файлы" title="добавить файлы"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></button>
     </div>
     <ul id="filelist"></ul>
     <div class="side-hint">Перетащи файл с кодом куда угодно на странице или нажми «+». Блоки во всех схемах пачки будут одного размера.</div>
@@ -831,10 +858,10 @@
     <textarea id="code" spellcheck="false" autocomplete="off"
       placeholder="вставь код — схема нарисуется сама"></textarea>
     <div class="editor-actions">
-      <button id="render" class="btn primary" disabled title="нарисовать схему (Ctrl+Enter)">Схема →</button>
+      <button id="render" class="btn primary" disabled title="нарисовать схему (Ctrl+Enter)">Схема<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></button>
       <span class="menu-wrap">
         <button id="settings" class="btn" aria-haspopup="true" aria-expanded="false"
-          title="настройки схемы: надписи, толщина линий, размер текста">⚙ параметры</button>
+          title="настройки схемы: надписи, толщина линий, размер текста"><svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg>параметры</button>
         <div class="menu" id="settings-menu" hidden>
           <label class="opt check" title="подписи блоков по-русски или по-английски">
             <input type="checkbox" id="ru" checked> надписи по-русски
@@ -856,22 +883,22 @@
     <div class="pane-title" id="viewbar">Схема<span class="spacer"></span>
       <span id="tabs" role="tablist" aria-label="листы"></span>
       <span class="tools" title="масштаб">
-        <button id="zoomout" class="btn" title="уменьшить" aria-label="уменьшить">−</button>
+        <button id="zoomout" class="btn" title="уменьшить" aria-label="уменьшить"><svg class="ico" aria-hidden="true"><use href="#i-minus"/></svg></button>
         <span id="zoomval">100%</span>
-        <button id="zoomin" class="btn" title="увеличить" aria-label="увеличить">+</button>
+        <button id="zoomin" class="btn" title="увеличить" aria-label="увеличить"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></button>
         <button id="zoomfit" class="btn" title="вписать в панель">вписать</button>
       </span>
       <span class="tools">
         <span class="menu-wrap">
           <button id="view-more" class="btn icon" aria-haspopup="true" aria-expanded="false"
-            title="ещё: скопировать SVG, полный экран" aria-label="ещё">⋯</button>
+            title="ещё: скопировать SVG, полный экран" aria-label="ещё"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></button>
           <div class="menu" id="view-menu" hidden>
             <button id="copy" disabled role="menuitem" title="скопировать SVG текущего листа в буфер">копировать SVG</button>
             <button id="view-full" role="menuitem" title="открыть текущий лист во весь экран">во весь экран</button>
           </div>
         </span>
         <button id="dx-open" class="btn primary dx-btn" disabled
-          title="скачать схему в SVG, PNG или draw.io"><span class="dx-arrow">↓</span>Скачать</button>
+          title="скачать схему в SVG, PNG или draw.io"><svg class="ico" aria-hidden="true"><use href="#i-download"/></svg>Скачать</button>
       </span>
     </div>
     <div id="viewport">
@@ -887,7 +914,7 @@
           <button id="ph-ex" class="btn primary" data-ex="input" title="подставить готовую программу">вставить пример</button>
         </div>
       </div>
-      <button id="zoomcard" class="btn" hidden title="открыть во весь экран">⤢ во весь экран</button>
+      <button id="zoomcard" class="btn" hidden title="открыть во весь экран"><svg class="ico" aria-hidden="true"><use href="#i-expand"/></svg>во весь экран</button>
     </div>
 
     <div id="statusline"><span id="msg">движок загружается…</span><span id="hints" class="hints">
@@ -919,18 +946,18 @@
   <span id="lbtitle" class="lbtitle"></span>
   <span class="spacer"></span>
   <span class="tools" title="масштаб">
-    <button id="lbout" class="btn" aria-label="уменьшить" title="уменьшить">−</button>
+    <button id="lbout" class="btn" aria-label="уменьшить" title="уменьшить"><svg class="ico" aria-hidden="true"><use href="#i-minus"/></svg></button>
     <span id="lbval">100%</span>
-    <button id="lbin" class="btn" aria-label="увеличить" title="увеличить">+</button>
+    <button id="lbin" class="btn" aria-label="увеличить" title="увеличить"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></button>
     <button id="lbfit" class="btn" title="вписать лист в экран">вписать</button>
   </span>
-  <button id="lbclose" class="btn" aria-label="закрыть" title="закрыть (Esc)">✕</button>
+  <button id="lbclose" class="btn" aria-label="закрыть" title="закрыть (Esc)"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
 </div>
 <div id="lbview"><div id="lbstage"></div></div>
 <div id="lbpager" hidden>
-  <button id="lbprev" aria-label="предыдущий лист" title="предыдущий лист">‹</button>
+  <button id="lbprev" aria-label="предыдущий лист" title="предыдущий лист"><svg class="ico" aria-hidden="true"><use href="#i-left"/></svg></button>
   <span id="lbthumbs" role="tablist" aria-label="листы"></span>
-  <button id="lbnext" aria-label="следующий лист" title="следующий лист">›</button>
+  <button id="lbnext" aria-label="следующий лист" title="следующий лист"><svg class="ico" aria-hidden="true"><use href="#i-right"/></svg></button>
 </div>
 </div>
 
@@ -941,8 +968,8 @@
     <div class="dx-head">
       <h2 id="dx-title">Скачать</h2>
       <button class="dx-help" id="dx-help" aria-expanded="false"
-        title="чем отличаются форматы">?</button>
-      <button class="dx-x" id="dx-close" aria-label="Закрыть" title="закрыть (Esc)">✕</button>
+        title="чем отличаются форматы"><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg></button>
+      <button class="dx-x" id="dx-close" aria-label="Закрыть" title="закрыть (Esc)"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
     <p class="dx-lead" id="dx-lead"></p>
     <p class="dx-help-p" id="dx-help-p" hidden>SVG — вектор для Word и печати,
@@ -965,7 +992,7 @@
         </label>
         <label class="dx-card" data-fmt="drawio" title="файл draw.io: блоки и стрелки редактируются">
           <input type="radio" name="dxfmt" value="drawio">
-          <span class="ic">◇</span><b>draw.io</b>
+          <span class="ic"><svg class="ico" aria-hidden="true"><use href="#i-diamond"/></svg></span><b>draw.io</b>
           <i>редактируемая схема: блоки и стрелки можно двигать</i>
         </label>
       </div>
@@ -995,14 +1022,14 @@
   <div class="dx-pan guide-pan" role="dialog" aria-modal="true" aria-labelledby="guide-title">
     <div class="dx-head">
       <h2 id="guide-title">Как это работает</h2>
-      <button class="dx-x" id="guide-close" aria-label="Закрыть" title="закрыть (Esc)">✕</button>
+      <button class="dx-x" id="guide-close" aria-label="Закрыть" title="закрыть (Esc)"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
     <ol class="guide-steps">
       <li class="guide-step">
         <div class="guide-art" aria-hidden="true">
           <div class="g-row">
             <div class="g-code"><i></i><i></i><i></i><i></i></div>
-            <span class="g-arrow">→</span>
+            <svg class="ico g-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
             <div class="g-flow"><span class="g-term"></span><span class="g-dia"></span></div>
           </div>
         </div>
@@ -1012,7 +1039,7 @@
         <div class="guide-art" aria-hidden="true">
           <div class="g-row">
             <span class="g-page"></span>
-            <span class="g-arrow">→</span>
+            <svg class="ico g-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
             <span class="g-page"><b>А</b></span>
             <span class="g-page"><b>Б</b></span>
           </div>
@@ -1023,8 +1050,8 @@
         <div class="guide-art" aria-hidden="true">
           <div class="g-row">
             <span class="g-page g-tile"></span>
-            <span class="g-arrow">⤢</span>
-            <div class="g-light"><span class="g-page"></span><span class="g-zoom">+</span></div>
+            <svg class="ico g-arrow" aria-hidden="true"><use href="#i-expand"/></svg>
+            <div class="g-light"><span class="g-page"></span><span class="g-zoom"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></span></div>
           </div>
         </div>
         <p><b>3.</b> Клик по листу — крупный просмотр, колесо — зум.</p>
@@ -1186,9 +1213,13 @@ function armTip(el) {
 document.addEventListener("pointerover", e => armTip(e.target.closest?.("[data-tip]")));
 document.addEventListener("pointerout", e => { if (e.target.closest?.("[data-tip]")) hideTip(); });
 /* Только клавиатурный фокус: после клика мышью подсказка не нужна. */
+let lastPointer = 0;
+document.addEventListener("pointerdown", () => { lastPointer = Date.now(); }, true);
 document.addEventListener("focusin", e => {
   const el = e.target.closest?.("[data-tip]");
-  if (el && el.matches(":focus-visible")) armTip(el);
+  /* Фокус после клика мышью — это не запрос подсказки: она всплывала
+     поверх только что открытой панели. */
+  if (el && el.matches(":focus-visible") && Date.now() - lastPointer > 600) armTip(el);
 });
 document.addEventListener("focusout", hideTip);
 addEventListener("scroll", hideTip, true);
